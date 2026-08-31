@@ -203,6 +203,8 @@
         {key:'sourceType', label:'جاي عن طريق', type:'select',
           options:['مندوب','علاقات عامة','ريسبشن','ميديا']},
         {key:'responsiblePerson', label:'اسم المسؤول عنه', type:'dynamicSelect', ref:'employees', refField:'name'},
+        {key:'managerRep', label:'شغال تحت إشراف مندوب', type:'dynamicSelect',
+          ref:'indoor_leads', refField:'name', filter:{field:'type', value:'مندوب'}},
         {key:'notes', label:'ملاحظات', type:'textarea'},
       ]},
     indoor_data:{ title:'الداتا والأرقام', icon:'📊', roles:['admin','pr_in'],
