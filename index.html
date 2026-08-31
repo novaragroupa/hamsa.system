@@ -329,7 +329,7 @@
   // خد القيمتين دول من لوحة تحكم مشروعك على supabase.com:
   // Project Settings > API > Project URL / anon public key
   // لو سبتهم زي ما هم، النظام هيشتغل بتخزين مؤقت محلي (تجربة فقط، البيانات مش هتفضل محفوظة).
-  const SUPABASE_URL = "https://kwyfttljxzevomkhxbuo.supabase.co/rest/v1/";
+  const SUPABASE_URL = "https://kwyfttljxzevomkhxbuo.supabase.co";
   const SUPABASE_ANON_KEY = "sb_publishable_igpWkf0VD0hV0VUJh3DOlQ_-cbjebyA";
 
   const sb = (typeof window.supabase !== 'undefined'
@@ -485,6 +485,7 @@
               <div class="avatar">${esc(state.user.name[0])}</div>
               <div><div class="name">${esc(state.user.name)}</div><div class="role">${esc(ROLE_LABELS[state.user.role])}</div></div>
             </div>
+            <button class="logout-btn" id="account-btn" style="margin-bottom:6px;background:#3a3a3a;">تغيير بيانات الدخول</button>
             <button class="logout-btn" id="logout-btn">تسجيل الخروج</button>
           </div>
         </div>
@@ -496,6 +497,7 @@
 
     root.querySelectorAll('.nav-item').forEach(b=>b.addEventListener('click', ()=>{ state.view=b.dataset.view; state.sidebarOpen=false; render(); }));
     document.getElementById('logout-btn').addEventListener('click', async ()=>{ if(sb) await sb.auth.signOut(); state.user=null; state.view='dashboard'; render(); });
+    document.getElementById('account-btn').addEventListener('click', openChangeAccountForm);
     document.getElementById('menu-toggle').addEventListener('click', ()=>{ state.sidebarOpen=!state.sidebarOpen; render(); });
 
     const page = document.getElementById('page');
@@ -1065,6 +1067,45 @@
         invalidate('employees'); invalidate('users'); modalBg.remove(); render();
       }catch(err){
         console.error(err); alert(err.message || 'فشل إنشاء حساب الموظف'); btn.disabled=false; btn.textContent='إنشاء الحساب والموظف';
+      }
+    });
+  }
+
+  /** أي موظف مسجّل دخوله يقدر يغيّر اسم المستخدم و/أو كلمة المرور بتاعته من هنا */
+  function openChangeAccountForm(){
+    const modalBg = document.createElement('div');
+    modalBg.className = 'modal-bg';
+    modalBg.innerHTML = `<div class="modal">
+      <h3>تغيير بيانات الدخول</h3>
+      <div class="assumption-note">سيبها فاضية لو مش عايز تغيّرها. لازم تدخل كلمة المرور الحالية للتأكيد.</div>
+      <form id="change-account-form"><div class="form-grid">
+        <div class="field"><label>اسم المستخدم الجديد (اختياري)</label><input name="newUsername" pattern="[a-zA-Z0-9._-]{3,40}" placeholder="سيبها فاضية لو مش هتغيّر" /></div>
+        <div class="field"><label>كلمة المرور الجديدة (اختياري)</label><input name="newPassword" type="password" minlength="8" placeholder="8 أحرف على الأقل" /></div>
+        <div class="field full"><label>كلمة المرور الحالية *</label><input name="currentPassword" type="password" required /></div>
+      </div>
+      <div class="modal-actions"><button type="button" class="btn-secondary" id="cancel-btn">إلغاء</button><button type="submit" class="btn-primary btn-gold">حفظ</button></div>
+      </form></div>`;
+    document.body.appendChild(modalBg);
+    modalBg.querySelector('#cancel-btn').addEventListener('click', ()=>modalBg.remove());
+    modalBg.addEventListener('click', e=>{if(e.target===modalBg) modalBg.remove();});
+    modalBg.querySelector('#change-account-form').addEventListener('submit', async e=>{
+      e.preventDefault();
+      const form=e.target, btn=form.querySelector('button[type=submit]');
+      const newUsername = form.newUsername.value.trim();
+      const newPassword = form.newPassword.value;
+      const currentPassword = form.currentPassword.value;
+      if(!newUsername && !newPassword){ alert('حدد اسم مستخدم جديد أو كلمة مرور جديدة على الأقل'); return; }
+      btn.disabled=true; btn.textContent='جارٍ الحفظ...';
+      try{
+        const {data,error}=await sb.functions.invoke('update-account',{body:{newUsername:newUsername||null, newPassword:newPassword||null, currentPassword}});
+        if(error) throw error;
+        if(data?.error) throw new Error(data.error);
+        alert('تم تحديث بيانات الدخول بنجاح.' + (newUsername? ' اسم المستخدم الجديد: '+data.username : ''));
+        modalBg.remove();
+        if(newUsername) state.user.username = data.username;
+        render();
+      }catch(err){
+        console.error(err); alert(err.message || 'فشل تحديث بيانات الدخول'); btn.disabled=false; btn.textContent='حفظ';
       }
     });
   }
