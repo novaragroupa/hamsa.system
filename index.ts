@@ -20,6 +20,8 @@ function usernameEmail(username: string) {
   return `${username.trim().toLowerCase()}@login.homsa.local`;
 }
 
+// كل موظف مسجّل دخوله يقدر يغيّر اسم المستخدم و/أو كلمة المرور بتاعته من هنا.
+// مفيش حاجة بتتبعت غير التوكن بتاعه، والسيرفر (service role) هو اللي بيعمل التعديل.
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
@@ -34,76 +36,62 @@ Deno.serve(async (req) => {
 
     const { data: actorProfile, error: profileError } = await admin
       .from('users')
-      .select('role, status')
+      .select('id, username, status')
       .eq('auth_user_id', actor.id)
       .single();
 
-    if (profileError || !actorProfile || !['admin', 'hr'].includes(actorProfile.role) || actorProfile.status !== 'active') {
-      return json({ error: 'فقط المدير أو HR يستطيع إنشاء حساب موظف' }, 403);
+    if (profileError || !actorProfile || actorProfile.status !== 'active') {
+      return json({ error: 'الحساب غير مفعّل' }, 403);
     }
 
     const body = await req.json();
-    const name = String(body.name || '').trim();
-    const username = String(body.username || '').trim().toLowerCase();
-    const password = String(body.password || '');
-    const role = String(body.role || '').trim();
-    const employeeData = body.employeeData || {};
+    const newUsername = body.newUsername ? String(body.newUsername).trim().toLowerCase() : null;
+    const newPassword = body.newPassword ? String(body.newPassword) : null;
+    const currentPassword = String(body.currentPassword || '');
 
-    const allowedRoles = ['hr','pr_out','pr_in','reception','accounting','callcenter','accommodation','system'];
-    if (actorProfile.role === 'hr' && role === 'admin') return json({ error: 'مسؤول HR لا يستطيع إنشاء حساب مدير' }, 403);
-    if (!allowedRoles.includes(role) && !(actorProfile.role === 'admin' && role === 'admin')) {
-      return json({ error: 'الصلاحية المطلوبة غير مسموحة' }, 400);
+    if (!newUsername && !newPassword) {
+      return json({ error: 'لازم تحدد اسم مستخدم جديد أو كلمة مرور جديدة على الأقل' }, 400);
     }
-    if (!name || !username || password.length < 8 || !role) {
-      return json({ error: 'الاسم واسم المستخدم والدور وكلمة المرور (8 أحرف على الأقل) مطلوبة' }, 400);
+    if (newPassword && newPassword.length < 8) {
+      return json({ error: 'كلمة المرور الجديدة لازم تكون 8 أحرف على الأقل' }, 400);
     }
-    if (!/^[a-z0-9._-]{3,40}$/.test(username)) {
+    if (newUsername && !/^[a-z0-9._-]{3,40}$/.test(newUsername)) {
       return json({ error: 'اسم المستخدم يجب أن يكون إنجليزيًا ويحتوي على حروف أو أرقام أو . _ - فقط' }, 400);
     }
+    if (!currentPassword) {
+      return json({ error: 'أدخل كلمة المرور الحالية للتأكيد' }, 400);
+    }
 
-    const { data: existing } = await admin.from('users').select('id').eq('username', username).maybeSingle();
-    if (existing) return json({ error: 'اسم المستخدم مستخدم بالفعل' }, 409);
-
-    const email = usernameEmail(username);
-    const { data: created, error: createError } = await admin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: { username, name, role },
+    // تأكيد الهوية: نتحقق من كلمة المرور الحالية قبل أي تعديل حساس
+    const check = await admin.auth.signInWithPassword({
+      email: usernameEmail(actorProfile.username),
+      password: currentPassword,
     });
-    if (createError || !created.user) return json({ error: createError?.message || 'فشل إنشاء حساب الدخول' }, 400);
+    if (check.error) return json({ error: 'كلمة المرور الحالية غير صحيحة' }, 401);
 
-    const { data: profile, error: insertError } = await admin.from('users').insert({
-      auth_user_id: created.user.id,
-      username,
-      name,
-      role,
-      status: 'active',
-      created_by: actor.id,
-    }).select().single();
-
-    if (insertError) {
-      await admin.auth.admin.deleteUser(created.user.id);
-      return json({ error: insertError.message }, 400);
+    if (newUsername && newUsername !== actorProfile.username) {
+      const { data: existing } = await admin.from('users').select('id').eq('username', newUsername).maybeSingle();
+      if (existing) return json({ error: 'اسم المستخدم ده مستخدم بالفعل' }, 409);
+      const { data: existingEmp } = await admin.from('employees').select('id').eq('username', newUsername).maybeSingle();
+      if (existingEmp) return json({ error: 'اسم المستخدم ده مستخدم بالفعل' }, 409);
     }
 
-    const { data: employee, error: employeeError } = await admin.from('employees').insert({
-      ...employeeData,
-      name,
-      user_id: created.user.id,
-      username,
-      status: 'active',
-    }).select().single();
+    const updatePayload: Record<string, unknown> = {};
+    if (newUsername) updatePayload.email = usernameEmail(newUsername);
+    if (newPassword) updatePayload.password = newPassword;
 
-    if (employeeError) {
-      await admin.from('users').delete().eq('id', profile.id);
-      await admin.auth.admin.deleteUser(created.user.id);
-      return json({ error: employeeError.message }, 400);
+    const { error: authUpdateError } = await admin.auth.admin.updateUserById(actor.id, updatePayload);
+    if (authUpdateError) return json({ error: authUpdateError.message }, 400);
+
+    if (newUsername) {
+      const { error: userUpdateError } = await admin.from('users').update({ username: newUsername }).eq('id', actorProfile.id);
+      if (userUpdateError) return json({ error: userUpdateError.message }, 400);
+      await admin.from('employees').update({ username: newUsername }).eq('user_id', actor.id);
     }
 
-    return json({ ok: true, user: profile, employee });
+    return json({ ok: true, username: newUsername || actorProfile.username });
   } catch (e) {
     console.error(e);
-    return json({ error: 'حدث خطأ غير متوقع أثناء إنشاء الحساب' }, 500);
+    return json({ error: 'حدث خطأ غير متوقع أثناء تعديل بيانات الدخول' }, 500);
   }
 });

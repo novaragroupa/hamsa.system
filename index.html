@@ -197,6 +197,16 @@
     if(!data || data.status !== 'active') return null;
     return data;
   }
+
+  // توافق مؤقت مع قاعدة البيانات القديمة (قبل Supabase Auth).
+  // لو لم يتم إنشاء حسابات Auth بعد، نحاول تسجيل الدخول عبر RPC آمن بدلاً من
+  // قراءة كلمات المرور من المتصفح مباشرة. راجع database/legacy-login-compat.sql.
+  async function legacyLogin(username, password){
+    const {data, error} = await sb.rpc('legacy_login', {p_username: username, p_password: password});
+    if(error) throw error;
+    if(!data || !data.length) return null;
+    return data[0];
+  }
   const ROLE_LABELS = {
     admin:'مدير النظام', hr:'HR', pr_out:'علاقات عامة - أوت دور', pr_in:'علاقات عامة - إن دور',
     reception:'استقبال', accounting:'حسابات', callcenter:'كول سنتر', accommodation:'تسكين', system:'حجوزات النظام'
@@ -473,10 +483,21 @@
         if(error) throw error;
         const profile = await loadAuthProfile(data.user);
         if(!profile){ await sb.auth.signOut(); throw new Error('الحساب غير مفعّل أو لم يتم ربطه بملف موظف'); }
-        state.user = profile; state.loginError=null; state.view='dashboard'; render();
-      }catch(err){
-        console.error('Supabase Auth login error', err);
-        state.loginError = err.message === 'Invalid login credentials' ? 'اسم المستخدم أو كلمة المرور غير صحيحة' : (err.message || 'تعذر تسجيل الدخول');
+        state.user = profile; state.legacySession=false; state.loginError=null; state.view='dashboard'; render();
+      }catch(authErr){
+        // لو المشروع ما زال يستخدم الحسابات القديمة، جرّب دالة التوافق.
+        try{
+          const profile = await legacyLogin(u, p);
+          if(profile){
+            state.user = profile; state.legacySession=true;
+            localStorage.setItem('homsa_legacy_profile', JSON.stringify(profile));
+            state.loginError=null; state.view='dashboard'; render(); return;
+          }
+        }catch(legacyErr){
+          console.warn('Legacy login unavailable', legacyErr);
+        }
+        console.error('Supabase Auth login error', authErr);
+        state.loginError = 'بيانات الدخول غير صحيحة أو لم يتم إنشاء حساب Supabase Auth بعد. لو هذه قاعدة البيانات القديمة، شغّل ملف database/legacy-login-compat.sql مرة واحدة.';
         renderLogin();
       }
     });
@@ -524,7 +545,11 @@
       </div>`;
 
     root.querySelectorAll('.nav-item').forEach(b=>b.addEventListener('click', ()=>{ state.view=b.dataset.view; state.sidebarOpen=false; render(); }));
-    document.getElementById('logout-btn').addEventListener('click', async ()=>{ if(sb) await sb.auth.signOut(); state.user=null; state.view='dashboard'; render(); });
+    document.getElementById('logout-btn').addEventListener('click', async ()=>{
+      if(sb && !state.legacySession) await sb.auth.signOut();
+      localStorage.removeItem('homsa_legacy_profile');
+      state.user=null; state.legacySession=false; state.view='dashboard'; render();
+    });
     document.getElementById('account-btn').addEventListener('click', openChangeAccountForm);
     document.getElementById('menu-toggle').addEventListener('click', ()=>{ state.sidebarOpen=!state.sidebarOpen; render(); });
 
@@ -1226,6 +1251,12 @@
         const profile=await loadAuthProfile(session.user);
         if(profile) state.user=profile;
         else await sb.auth.signOut();
+      } else {
+        // استرجاع جلسة التوافق القديمة عند الحاجة.
+        const raw=localStorage.getItem('homsa_legacy_profile');
+        if(raw){
+          try{ state.user=JSON.parse(raw); state.legacySession=true; }catch(_){ localStorage.removeItem('homsa_legacy_profile'); }
+        }
       }
     }catch(e){ console.error('Auth init error',e); }
     render();
