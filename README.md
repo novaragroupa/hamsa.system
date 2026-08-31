@@ -109,3 +109,26 @@ supabase functions deploy update-account
 3. ده اختياري بالكامل — مش شرط عشان النظام يشتغل، مفيد بس لو الفريق أكتر من شخص وعايزين تتبع تاريخ التغييرات في قاعدة البيانات والـ Edge Functions.
 
 `index.html` يحتوي فقط على Supabase URL وPublishable/Anon key، وده آمن يترفع على GitHub.
+
+## 7) ربط Google Sheets (مزامنة تلقائية)
+
+تمت إضافة مزامنة اختيارية من النظام إلى Google Sheets بدون وضع بيانات Google الحساسة داخل GitHub أو المتصفح.
+
+1. أنشئ Google Sheet جديد.
+2. من **Extensions → Apps Script** الصق محتوى `google-apps-script/Code.gs`.
+3. غيّر `SECRET` إلى قيمة طويلة عشوائية.
+4. انشره: **Deploy → New deployment → Web app**، ثم انسخ رابط الـ Web App.
+5. في `index.html` ضع الرابط في `GOOGLE_SHEETS_WEBHOOK` ونفس السر في `GOOGLE_SHEETS_SYNC_TOKEN`.
+6. كل عملية إضافة/تعديل/حذف ناجحة ستتزامن إلى Sheet منفصل باسم الجدول.
+
+> ملاحظة: Google Sheets هنا نسخة مزامنة/تقارير، وSupabase يبقى مصدر البيانات الأساسي.
+
+## 8) GitHub Pages (نشر تلقائي)
+
+أُضيف الملف `.github/workflows/deploy-pages.yml`. بعد رفع المشروع إلى GitHub:
+
+1. افتح **Settings → Pages** في المستودع.
+2. اختر **GitHub Actions** كمصدر للنشر.
+3. كل `push` إلى فرع `main` سيعيد نشر الموقع تلقائيًا.
+
+لا ترفع أسرار Google أو Supabase Service Role إلى GitHub. لو استخدمت GitHub Actions لاحقًا لمهام حساسة، استخدم **GitHub Secrets**.

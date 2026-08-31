@@ -338,6 +338,27 @@
     ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
     : null;
 
+  /* ---------------- Google Sheets sync (optional) ---------------- */
+  // ضع رابط Web App من Google Apps Script هنا بعد النشر.
+  // اتركه فارغًا لتعطيل المزامنة بدون التأثير على النظام.
+  const GOOGLE_SHEETS_WEBHOOK = '';
+  const GOOGLE_SHEETS_SYNC_TOKEN = '';
+
+  async function syncGoogleSheet(action, table, payload){
+    if(!GOOGLE_SHEETS_WEBHOOK) return;
+    try{
+      await fetch(GOOGLE_SHEETS_WEBHOOK,{
+        method:'POST',
+        headers:{'Content-Type':'text/plain;charset=utf-8'},
+        body:JSON.stringify({action, table, payload, token:GOOGLE_SHEETS_SYNC_TOKEN, at:new Date().toISOString()}),
+        keepalive:true
+      });
+    }catch(e){
+      // المزامنة لا يجب أن تمنع حفظ البيانات الأساسية في Supabase.
+      console.warn('Google Sheets sync failed', e);
+    }
+  }
+
   /* ---------------- Storage helpers ---------------- */
   async function loadList(key){
     if(sb){
@@ -357,12 +378,15 @@
       try{
         const { data, error } = await sb.from(table).insert([record]).select();
         if(error) throw error;
-        return data && data[0];
-      }catch(e){ console.error('Supabase insert error', table, e); return record; }
+        const saved = data && data[0];
+        if(saved) syncGoogleSheet('upsert', table, saved);
+        return saved;
+      }catch(e){ console.error('Supabase insert error', table, e); throw e; }
     }
     const list = await loadList(table);
     list.push(record);
     try{ await window.storage.set(table, JSON.stringify(list), true); }catch(e){}
+    syncGoogleSheet('upsert', table, record);
     return record;
   }
 
@@ -373,13 +397,15 @@
         const { id, ...rest } = record;
         const { error } = await sb.from(table).update(rest).eq('id', id);
         if(error) throw error;
-      }catch(e){ console.error('Supabase update error', table, e); }
+        syncGoogleSheet('upsert', table, record);
+      }catch(e){ console.error('Supabase update error', table, e); throw e; }
       return;
     }
     const list = await loadList(table);
     const idx = list.findIndex(r=>r.id===record.id);
     if(idx>=0) list[idx]=record; else list.push(record);
     try{ await window.storage.set(table, JSON.stringify(list), true); }catch(e){}
+    syncGoogleSheet('upsert', table, record);
   }
 
   /** يحذف سجل بالـ id بتاعه */
@@ -388,11 +414,13 @@
       try{
         const { error } = await sb.from(table).delete().eq('id', id);
         if(error) throw error;
-      }catch(e){ console.error('Supabase delete error', table, e); }
+        syncGoogleSheet('delete', table, {id});
+      }catch(e){ console.error('Supabase delete error', table, e); throw e; }
       return;
     }
     const list = await loadList(table);
     try{ await window.storage.set(table, JSON.stringify(list.filter(r=>r.id!==id)), true); }catch(e){}
+    syncGoogleSheet('delete', table, {id});
   }
 
   const cache = {};

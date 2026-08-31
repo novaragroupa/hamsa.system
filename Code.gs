@@ -1,121 +1,72 @@
 /**
- * ============================================================
- *  Homsa System — Google Apps Script Backend (Sheets as DB)
- * ============================================================
- * خطوات التركيب:
- * 1) افتح Google Sheet جديد، وسمّه مثلاً "Homsa_Database".
- * 2) اعمل تبويب (Tab) لكل جدول بنفس الأسماء دي بالظبط:
- *    employees, companies, visits, indoor_leads, indoor_data,
- *    reception_desk, reception_media, accounting,
- *    callcenter_feedback, callcenter_payments, accommodation, users
- * 3) في السطر الأول من كل تبويب اكتب أسماء الأعمدة (id, ثم باقي
- *    الحقول بنفس أسماء الحقول اللي في النظام بالإنجليزي، مثال
- *    لجدول employees: id, name, specialNumber, companyNumber,
- *    department, phone, address, hireDate, salary, photo).
- * 4) من القائمة: Extensions > Apps Script، والصق الكود ده كامل.
- * 5) اضغط Deploy > New deployment > Web app.
- *    - Execute as: Me
- *    - Who has access: Anyone
- * 6) هيديك رابط (Web app URL) — ده اللي هنحطه في الواجهة الأمامية
- *    بدل التخزين المؤقت الحالي.
- * ============================================================
+ * Homsa System -> Google Sheets sync endpoint
+ * 1) افتح Extensions > Apps Script داخل Google Sheet.
+ * 2) الصق هذا الملف واضبط SECRET.
+ * 3) Deploy > New deployment > Web app.
+ * 4) Execute as: Me, Who has access: Anyone with the link.
+ * 5) انسخ رابط Web App إلى GOOGLE_SHEETS_WEBHOOK في index.html.
  */
+const SECRET = 'CHANGE_ME_TO_A_LONG_RANDOM_SECRET';
 
-const SHEET_NAME_USERS = 'users';
-
-function getSheet_(name){
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(name);
-  if(!sheet) throw new Error('لا يوجد تبويب باسم: ' + name);
-  return sheet;
+function doGet() {
+  return ContentService.createTextOutput(JSON.stringify({ok:true, service:'homsa-google-sheets-sync'}))
+    .setMimeType(ContentService.MimeType.JSON);
 }
 
-function sheetToObjects_(sheet){
-  const values = sheet.getDataRange().getValues();
-  if(values.length < 2) return [];
-  const headers = values[0];
-  return values.slice(1).map(row=>{
-    const obj = {};
-    headers.forEach((h,i)=> obj[h] = row[i]);
-    return obj;
-  });
-}
-
-function appendObject_(sheet, obj){
-  const headers = sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
-  const row = headers.map(h=> obj[h] !== undefined ? obj[h] : '');
-  sheet.appendRow(row);
-}
-
-function updateObjectById_(sheet, obj){
-  const headers = sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
-  const idCol = headers.indexOf('id');
-  const values = sheet.getDataRange().getValues();
-  for(let r=1; r<values.length; r++){
-    if(values[r][idCol] === obj.id){
-      const row = headers.map(h=> obj[h] !== undefined ? obj[h] : values[r][headers.indexOf(h)]);
-      sheet.getRange(r+1,1,1,headers.length).setValues([row]);
-      return true;
+function doPost(e) {
+  try {
+    const body = JSON.parse(e.postData && e.postData.contents || '{}');
+    if (SECRET !== 'CHANGE_ME_TO_A_LONG_RANDOM_SECRET' && body.token !== SECRET) {
+      return json({ok:false, error:'Unauthorized'}, 401);
     }
-  }
-  return false;
-}
+    if (!body.table || !body.action) return json({ok:false, error:'Missing action/table'}, 400);
 
-function deleteObjectById_(sheet, id){
-  const values = sheet.getDataRange().getValues();
-  const headers = values[0];
-  const idCol = headers.indexOf('id');
-  for(let r=1; r<values.length; r++){
-    if(values[r][idCol] === id){ sheet.deleteRow(r+1); return true; }
-  }
-  return false;
-}
+    const ss = SpreadsheetApp.getActive();
+    const sheet = getOrCreateSheet(ss, safeSheetName(body.table));
+    if (body.action === 'delete') deleteRowById(sheet, String(body.payload && body.payload.id || ''));
+    else if (body.action === 'upsert') upsertRow(sheet, body.payload || {});
+    else return json({ok:false, error:'Unknown action'}, 400);
 
-function jsonOut_(obj){
-  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
-}
-
-/** GET: ?action=list&table=employees  |  ?action=login&u=...&p=... */
-function doGet(e){
-  try{
-    const action = e.parameter.action;
-    if(action === 'login'){
-      const users = sheetToObjects_(getSheet_(SHEET_NAME_USERS));
-      const found = users.find(u=> u.username===e.parameter.u && String(u.password)===e.parameter.p);
-      if(!found) return jsonOut_({ok:false, error:'بيانات الدخول غير صحيحة'});
-      delete found.password;
-      return jsonOut_({ok:true, user:found});
-    }
-    if(action === 'list'){
-      const data = sheetToObjects_(getSheet_(e.parameter.table));
-      return jsonOut_({ok:true, data});
-    }
-    return jsonOut_({ok:false, error:'action غير معروف'});
-  }catch(err){
-    return jsonOut_({ok:false, error:String(err)});
+    return json({ok:true});
+  } catch (err) {
+    return json({ok:false, error:String(err)}, 500);
   }
 }
 
-/** POST body JSON: {action:'add'|'update'|'delete', table:'employees', record:{...}} */
-function doPost(e){
-  try{
-    const body = JSON.parse(e.postData.contents);
-    const sheet = getSheet_(body.table);
-    if(body.action === 'add'){
-      if(!body.record.id) body.record.id = Utilities.getUuid();
-      appendObject_(sheet, body.record);
-      return jsonOut_({ok:true, id: body.record.id});
-    }
-    if(body.action === 'update'){
-      const done = updateObjectById_(sheet, body.record);
-      return jsonOut_({ok:done});
-    }
-    if(body.action === 'delete'){
-      const done = deleteObjectById_(sheet, body.id);
-      return jsonOut_({ok:done});
-    }
-    return jsonOut_({ok:false, error:'action غير معروف'});
-  }catch(err){
-    return jsonOut_({ok:false, error:String(err)});
-  }
+function safeSheetName(name) { return String(name).replace(/[^a-zA-Z0-9_\-]/g, '_').slice(0, 90); }
+function getOrCreateSheet(ss, name) {
+  let sh = ss.getSheetByName(name);
+  if (!sh) { sh = ss.insertSheet(name); sh.getRange(1,1,1,1).setValue('id'); sh.setFrozenRows(1); }
+  return sh;
 }
+function headers(sheet) {
+  const last = Math.max(sheet.getLastColumn(), 1);
+  return sheet.getRange(1,1,1,last).getValues()[0].map(String).filter(Boolean);
+}
+function ensureHeaders(sheet, keys) {
+  let h = headers(sheet);
+  const missing = keys.filter(k => !h.includes(k));
+  if (missing.length) { sheet.getRange(1,h.length+1,1,missing.length).setValues([missing]); h = h.concat(missing); }
+  return h;
+}
+function upsertRow(sheet, obj) {
+  const keys = Object.keys(obj || {});
+  if (!keys.length) return;
+  const h = ensureHeaders(sheet, keys);
+  const idCol = h.indexOf('id') + 1;
+  const id = String(obj.id || '');
+  let row = sheet.getLastRow() + 1;
+  if (id && idCol) {
+    const values = sheet.getLastRow() > 1 ? sheet.getRange(2,idCol,sheet.getLastRow()-1,1).getValues().flat().map(String) : [];
+    const found = values.indexOf(id); if (found >= 0) row = found + 2;
+  }
+  const values = h.map(k => { const v=obj[k]; return v === null || v === undefined ? '' : (typeof v==='object' ? JSON.stringify(v) : v); });
+  sheet.getRange(row,1,1,h.length).setValues([values]);
+}
+function deleteRowById(sheet, id) {
+  if (!id || sheet.getLastRow() < 2) return;
+  const h = headers(sheet), idCol=h.indexOf('id')+1; if (!idCol) return;
+  const values=sheet.getRange(2,idCol,sheet.getLastRow()-1,1).getValues().flat().map(String);
+  const found=values.indexOf(id); if(found>=0) sheet.deleteRow(found+2);
+}
+function json(obj) { return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON); }
