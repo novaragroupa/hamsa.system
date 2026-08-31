@@ -8,9 +8,21 @@
  */
 const SECRET = 'CHANGE_ME_TO_A_LONG_RANDOM_SECRET';
 
-function doGet() {
-  return ContentService.createTextOutput(JSON.stringify({ok:true, service:'homsa-google-sheets-sync'}))
-    .setMimeType(ContentService.MimeType.JSON);
+function doGet(e) {
+  try {
+    const p = e && e.parameter || {};
+    if (SECRET !== 'CHANGE_ME_TO_A_LONG_RANDOM_SECRET' && p.token !== SECRET) {
+      return json({ok:false, error:'Unauthorized'});
+    }
+    if (p.action === 'list' && p.table) {
+      const ss = SpreadsheetApp.getActive();
+      const sheet = ss.getSheetByName(safeSheetName(p.table));
+      return json({ok:true, rows: sheet ? readRows(sheet) : []});
+    }
+    return json({ok:true, service:'homsa-google-sheets-sync'});
+  } catch (err) {
+    return json({ok:false, error:String(err)});
+  }
 }
 
 function doPost(e) {
@@ -31,6 +43,29 @@ function doPost(e) {
   } catch (err) {
     return json({ok:false, error:String(err)}, 500);
   }
+}
+
+function readRows(sheet) {
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow < 2 || lastCol < 1) return [];
+  const h = sheet.getRange(1,1,1,lastCol).getValues()[0].map(String);
+  const values = sheet.getRange(2,1,lastRow-1,lastCol).getValues();
+  return values.filter(row => row.some(v => v !== '')).map(row => {
+    const obj = {};
+    h.forEach((key,i) => {
+      let v = row[i];
+      if (v instanceof Date) v = v.toISOString();
+      if (typeof v === 'string') {
+        const t=v.trim();
+        if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
+          try { v=JSON.parse(t); } catch(_) {}
+        }
+      }
+      obj[key]=v;
+    });
+    return obj;
+  });
 }
 
 function safeSheetName(name) { return String(name).replace(/[^a-zA-Z0-9_\-]/g, '_').slice(0, 90); }

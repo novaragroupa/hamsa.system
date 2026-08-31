@@ -1,4 +1,4 @@
-name: Deploy Homsa to GitHub Pages
+name: Deploy static site to GitHub Pages
 on:
   push:
     branches: [main]
@@ -9,7 +9,7 @@ permissions:
   id-token: write
 concurrency:
   group: pages
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   deploy:
     environment:
