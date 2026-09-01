@@ -1,12 +1,13 @@
 /**
  * Homsa System -> Google Sheets sync endpoint
  * 1) افتح Extensions > Apps Script داخل Google Sheet.
- * 2) الصق هذا الملف واضبط SECRET.
+ * 2) الصق هذا الملف (تم ضبط SECRET بالفعل ليطابق ملف index.html).
  * 3) Deploy > New deployment > Web app.
  * 4) Execute as: Me, Who has access: Anyone with the link.
- * 5) انسخ رابط Web App إلى GOOGLE_SHEETS_WEBHOOK في index.html.
+ * 5) رابط الـ Web App الحالي مضبوط بالفعل في index.html:
+ *    https://script.google.com/macros/s/AKfycbw0VzAQmmQQ0zfp0KFHR9f_iV3tBNTJZJBTxCEAp1eiARtCDfaSATcZ4w0UZg-astiTyQ/exec
  */
-const SECRET = 'CHANGE_ME_TO_A_LONG_RANDOM_SECRET';
+const SECRET = 'HMS-9f2Lp7QvXeR4tWyZ1cA6bN0mF3sJ8dK';
 
 function doGet(e) {
   try {
