@@ -346,6 +346,8 @@
   .detail-item .v{font-size:13px;font-weight:700;word-break:break-word;}
   .link-box{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px;border:1px solid var(--line);border-radius:10px;margin-bottom:8px;}
   .link-box a{color:var(--navy-700);font-weight:700;text-decoration:none;}
+  tbody tr.row-clickable{cursor:pointer;}
+  tbody tr.row-clickable:hover{background:#fdf6e3;}
 </style>
 
 <script>
@@ -1573,7 +1575,7 @@
         <div class="empty-state"><div class="big">🔒</div>تقارير الزيارات متاحة فقط لقائد الفريق (Team Leader) الخاص بك، أو لمدير النظام.</div>`;
       return;
     }
-    await renderModule(page, 'visits');
+    await renderModule(page, 'visits', { rowDetail:true });
   }
 
 
@@ -3241,6 +3243,7 @@
     // الاشتراك بيتضاف تلقائيًا بس لما حالة المهتم تتغيّر لـ"مشترك" — مفيش زرار
     // إضافة يدوي في هذا القسم حتى لو المستخدم عنده صلاحية كتابة على الموديول.
     const canAddNew = canWriteModule && key!=='subscriptions';
+    const rowDetail = !!options.rowDetail;
 
     // فلترة الأعمدة: بنستبعد أي حقل اتفرض من forcedFilter (زي النوع جوه بوابة
     // المهتمين/المندوبين) عشان مايبانش فلتر لحاجة أصلًا متثبتة في هذا العرض.
@@ -3269,11 +3272,20 @@
         bindTableEvents(container, visibleData);
       });
       if(canAssignTrip){ bindAccommodationAssignEvents(container, visibleData); return; }
-      container.querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click', ()=>{
+      if(rowDetail){
+        container.querySelectorAll('tr[data-viewrow]').forEach(tr=>tr.addEventListener('click', (e)=>{
+          if(e.target.closest('button')) return;
+          const row = visibleData.find(r=>String(r.id)===String(tr.dataset.viewrow));
+          if(row) openRowDetailModal(mod, row, linkMaps, key);
+        }));
+      }
+      container.querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click', (e)=>{
+        e.stopPropagation();
         const row=visibleData.find(r=>String(r.id)===String(b.dataset.edit));
         if(prCanEditRow(key,row)) openForm(key,b.dataset.edit,options.forcedAddValues); else alert('ليس لديك صلاحية لتعديل هذه البيانات');
       }));
-      container.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click', async ()=>{
+      container.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click', async (e)=>{
+        e.stopPropagation();
         const row=visibleData.find(r=>String(r.id)===String(b.dataset.del));
         if(!prCanEditRow(key,row)){ alert('ليس لديك صلاحية لحذف هذه البيانات'); return; }
         if(!confirm('تأكيد الحذف؟')) return;
@@ -3296,7 +3308,7 @@
       const moreHtml = visibleData.length>shown.length ? `<div style="text-align:center;padding:12px;"><button class="btn-secondary" id="module-more" style="width:auto;padding:9px 20px;">عرض المزيد (${shown.length} من ${visibleData.length})</button></div>` : '';
       return `<div class="table-wrap"><table>
           <thead><tr>${mod.fields.map(f=>`<th>${esc(f.label)}</th>`).join('')}<th></th></tr></thead>
-          <tbody>${shown.map(row=> canAssignTrip? renderAccommodationAssignRow(mod,row,linkMaps) : renderRow(mod,row,linkMaps,canWriteModule)).join('')}</tbody>
+          <tbody>${shown.map(row=> canAssignTrip? renderAccommodationAssignRow(mod,row,linkMaps) : renderRow(mod,row,linkMaps,canWriteModule,rowDetail)).join('')}</tbody>
         </table></div>${moreHtml}`;
     };
 
@@ -3352,6 +3364,7 @@
       </div>
       ${isPRUser() && state.user.role!=='pr_manager' ? `<div class="assumption-note">البيانات المعروضة هنا خاصة بنطاق صلاحيتك. لا يتم عرض بيانات أعضاء العلاقات العامة الآخرين.</div>`:''}
       ${!canWriteModule && !canAssignTrip ? `<div class="assumption-note">عرض فقط: ليس لديك صلاحية إضافة أو تعديل أو حذف بيانات هنا.</div>`:''}
+      ${rowDetail ? `<div class="assumption-note">اضغط على أي صف في الجدول لعرض كل تفاصيله في نافذة منفصلة.</div>` : ''}
       ${key==='subscriptions' && !options.forcedFilter ? `<div class="assumption-note">الاشتراك بيتولد تلقائيًا فقط عند تغيير حالة المهتم إلى "مشترك" من قسم المهتمون والمندوبين — بعدها هيختفي من قائمة المهتمين ويظهر هنا عشان تكمل بياناته. أي اشتراك تتغيّر حالته إلى "ملغي" بيختفي من هنا ويظهر في "الاشتراكات الملغاة".</div>` : ''}
       ${key==='subscriptions' && options.forcedFilter && options.forcedFilter.subscriptionStatus==='ملغي' ? `<div class="assumption-note">الاشتراكات هنا حالتها "ملغي". لو رجّعت حالة أي اشتراك منها إلى "نشط" أو "مكتمل" من فورم التعديل، هيرجع تلقائيًا لقائمة "الاشتراكات" العادية.</div>` : ''}
       ${canAssignTrip ? `<div class="assumption-note">تقدر هنا تحدد الرحلة والفندق والغرفة لكل مشترك فقط — باقي بيانات المشترك للعرض.</div>`:''}
@@ -3513,13 +3526,54 @@
     return esc(val);
   }
 
-  function renderRow(mod, row, linkMaps, canWrite){
+  function renderRow(mod, row, linkMaps, canWrite, clickable){
     if(canWrite===undefined) canWrite=true; // القيمة الافتراضية بتحافظ على السلوك القديم لأي نداء تاني للدالة دي
-    return `<tr>${mod.fields.map(f=>`<td>${fieldDisplay(f,row[f.key],linkMaps,row)}</td>`).join('')}
+    return `<tr${clickable? ` class="row-clickable" data-viewrow="${esc(row.id)}"` : ''}>${mod.fields.map(f=>`<td>${fieldDisplay(f,row[f.key],linkMaps,row)}</td>`).join('')}
       <td style="white-space:nowrap;">
         ${canWrite ? `<button class="icon-btn" data-edit="${row.id}">✏️</button>
         <button class="icon-btn del" data-del="${row.id}">🗑️</button>` : ''}
       </td></tr>`;
+  }
+
+  // نافذة تفاصيل الصف الكاملة: بتعرض كل حقول الموديول (بما فيها المتابعات
+  // والصورة والحقول المخفية من الجدول) في شكل detail-grid مقروء، مع إمكانية
+  // فتح فورم التعديل مباشرة منها لو المستخدم عنده صلاحية.
+  function openRowDetailModal(mod, row, linkMaps, key){
+    const canEdit = prCanEditRow(key, row);
+    const imageField = mod.fields.find(f=>f.type==='image');
+    const otherFields = mod.fields.filter(f=>f.type!=='image');
+    const modalBg = document.createElement('div');
+    modalBg.className = 'modal-bg';
+    modalBg.innerHTML = `<div class="modal">
+      <h3>${mod.icon} تفاصيل — ${esc(mod.title)}</h3>
+      ${imageField && row[imageField.key] ? `<div style="text-align:center;margin-bottom:16px;"><img src="${row[imageField.key]}" style="width:96px;height:96px;border-radius:50%;object-fit:cover;box-shadow:0 4px 14px rgba(0,0,0,.15);"/></div>` : ''}
+      <div class="detail-grid">
+        ${otherFields.map(f=>{
+          let displayVal;
+          if(f.type==='followups'){
+            const arr = Array.isArray(row[f.key])? row[f.key].filter(x=>x && (x.date||x.note)) : [];
+            displayVal = arr.length
+              ? arr.slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))).map(x=>`<div style="margin-bottom:4px;">${x.date? `<b dir="ltr">${esc(fmtDate(x.date))}</b> — `:''}${esc(x.note||'')}</div>`).join('')
+              : '<span class="badge gray">لا يوجد</span>';
+          } else if(f.type==='textarea'){
+            displayVal = row[f.key] ? esc(row[f.key]).replace(/\n/g,'<br/>') : '—';
+          } else {
+            displayVal = fieldDisplay(f, row[f.key], linkMaps, row);
+            if(displayVal===undefined || displayVal===null || displayVal==='') displayVal='—';
+          }
+          return `<div class="detail-item"><div class="k">${esc(f.label)}</div><div class="v">${displayVal}</div></div>`;
+        }).join('')}
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="close-detail-btn">إغلاق</button>
+        ${canEdit? `<button type="button" class="btn-primary btn-gold" id="edit-detail-btn">✏️ تعديل</button>`:''}
+      </div>
+    </div>`;
+    document.body.appendChild(modalBg);
+    modalBg.querySelector('#close-detail-btn').addEventListener('click', ()=>modalBg.remove());
+    modalBg.addEventListener('click', e=>{ if(e.target===modalBg) modalBg.remove(); });
+    const editBtn = modalBg.querySelector('#edit-detail-btn');
+    if(editBtn) editBtn.addEventListener('click', ()=>{ modalBg.remove(); openForm(key, row.id); });
   }
 
   async function openEmployeeAccountForm(){
