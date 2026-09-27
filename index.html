@@ -2152,7 +2152,7 @@
           periodRows = filteredData.filter(r=>String(r[dateField.key]||'').slice(0,4)===period.year);
           periodTitle = 'خلال سنة ' + period.year;
         } else {
-          periodRows = filteredData.filter(r=>r[dateField.key]===period.day);
+          periodRows = filteredData.filter(r=>String(r[dateField.key]||'').slice(0,10)===period.day);
           periodTitle = 'يوم ' + fmtDate(period.day);
         }
         widgetData = periodRows;
@@ -3905,7 +3905,7 @@
         Object.keys(forcedValues).forEach(k=>{ newRow[k] = forcedValues[k]; });
 
         // تاريخ الاشتراك / التسجيل بيتحط تلقائيًا بتاريخ اليوم وقت الإضافة بس،
-        // وعند التعديل بيفضل زي ما هو (الحقل مش ظاهر في الفورم أصلًا).
+        // وعند التعديل بيفضل زي ما هو (الحقل مش ظاهر في الفورم أصلاً).
         const autoDateKey = AUTO_DATE_FIELDS[key];
         if(autoDateKey && isNew && !newRow[autoDateKey]) newRow[autoDateKey] = todayISO();
 
