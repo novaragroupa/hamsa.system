@@ -1112,12 +1112,18 @@
   function fmtDate(v){
     if(v===undefined || v===null || v==='') return '';
     const s = String(v).trim();
-    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    // مهم جدًا: بنستخرج أجزاء التاريخ (سنة/شهر/يوم) مباشرة من النص باستخدام
+    // regex فقط، من غير ما نمرّ على new Date(s) أبدًا. لو استخدمنا new Date()
+    // مع قيمة فيها وقت (زي "2026-09-27T00:00:00.000Z" اللي بترجع أحيانًا من
+    // Google Sheets)، فإن getMonth()/getDate()/getFullYear() بتتحسب بتوقيت
+    // المتصفح المحلي، وده ممكن يزوّد أو ينقص يوم كامل حسب فرق التوقيت — وهو
+    // بالظبط سبب ظهور تاريخ في الجدول مختلف عن التاريخ المختار في الفلتر
+    // (لأن الفلترة نفسها بتقارن أول 10 حروف من النص الخام من غير أي تحويل).
+    // دلوقتي fmtDate بتستخدم نفس منطق الفلترة بالظبط، فالعرض والفلتر
+    // بيتطابقوا دايمًا مهما كانت القيمة الجايه من السيرفر (تاريخ فقط أو
+    // تاريخ+وقت).
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
     if(m) return m[2]+'/'+m[3]+'/'+m[1];
-    if(/^\d{4}-\d{2}-\d{2}T/.test(s)){
-      const d = new Date(s);
-      if(!isNaN(d)) return String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0')+'/'+d.getFullYear();
-    }
     return s;
   }
   // تاريخ النهاردة بالتوقيت المحلي (مش UTC) عشان مايتأخرش يوم بعد نص الليل.
@@ -2169,7 +2175,7 @@
           </div>
           <div id="daily-log-body" style="${state.analyticsLogOpen?'':'display:none;'}">
           ${period.mode==='day' ? `<div style="margin-bottom:14px;">
-            <label style="font-size:13px;font-weight:700;color:var(--navy-700);display:block;margin-bottom:6px;">اختر يوم من شهر ${esc(fmtDate(monthMin).slice(3))}</label>
+            <label style="font-size:13px;font-weight:700;color:var(--navy-700);display:block;margin-bottom:6px;">اختر يوم من شهر ${esc(monthMin.slice(5,7)+'/'+monthMin.slice(0,4))}</label>
             <input type="date" id="period-day-input" value="${esc(period.day)}" min="${esc(monthMin)}" max="${esc(monthMax)}"
               style="padding:9px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;background:var(--sand-50);"/>
           </div>` : ''}
