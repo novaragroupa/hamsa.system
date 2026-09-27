@@ -1540,6 +1540,7 @@
     }
     if(state.view==='dashboard') await renderDashboard(page, mods);
     else if(state.view==='pr_teams') await renderPRHierarchy(page);
+    else if(state.view==='teams') await renderTeamsSection(page);
     else if(state.view==='analytics') await renderAnalytics(page, analyticsAccessibleModules());
     else if(state.view==='accommodation') await renderAccommodationSection(page);
     else if(state.view==='trips_hub') await renderTripsHub(page);
@@ -1576,6 +1577,91 @@
       return;
     }
     await renderModule(page, 'visits', { rowDetail:true });
+  }
+
+  /* ---------------- قسم "الفرق": كروت قابلة للضغط تعرض بيانات الفريق وأعضاءه ---------------- */
+  async function renderTeamsSection(page){
+    const mod = MODULES.teams;
+    if(!mod.roles.includes(state.user.role)) return;
+    await getDataMany(['teams','employees']);
+    const teams = (await getData('teams')).slice().sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'ar'));
+    const employees = await getData('employees');
+
+    page.innerHTML = `
+      <div class="page-head"><h2>${mod.icon} ${esc(mod.title)}</h2>
+        <button class="btn-primary btn-gold" id="add-team-btn" style="width:auto;padding:10px 20px;">+ إضافة فريق</button>
+      </div>
+      <div class="assumption-note">اضغط على أي فريق لعرض كل بياناته وأعضائه.</div>
+      <div class="card">
+        ${teams.length? `<div class="areas-grid">${teams.map(t=>{
+          const cnt = employees.filter(e=>normTeam(e.team)===normTeam(t.name) && e.status!=='inactive').length;
+          return `<div class="area-chip click-card" data-team="${esc(t.id)}">
+            <div class="cnt">🧩</div><div class="nm">${esc(t.name)}</div>
+            <div class="nm" style="color:var(--muted);">القائد: ${esc(t.leader||'—')}</div>
+            <div class="nm" style="color:var(--navy-700);font-weight:700;">${cnt} عضو</div>
+            <button class="icon-btn" data-editteam="${esc(t.id)}" style="margin-top:6px;">✏️ تعديل</button>
+            <button class="icon-btn del" data-delteam="${esc(t.id)}" style="margin-top:6px;">🗑️ حذف</button>
+          </div>`;
+        }).join('')}</div>` : `<div class="empty-state"><div class="big">📭</div>لا توجد فرق بعد — ابدأ بالإضافة</div>`}
+      </div>`;
+
+    document.getElementById('add-team-btn').addEventListener('click', ()=>openForm('teams', null));
+
+    page.querySelectorAll('[data-team]').forEach(el=>el.addEventListener('click', (e)=>{
+      if(e.target.closest('[data-editteam]') || e.target.closest('[data-delteam]')) return;
+      openTeamDetailModal(el.dataset.team);
+    }));
+    page.querySelectorAll('[data-editteam]').forEach(b=>b.addEventListener('click', (e)=>{
+      e.stopPropagation(); openForm('teams', b.dataset.editteam);
+    }));
+    page.querySelectorAll('[data-delteam]').forEach(b=>b.addEventListener('click', async (e)=>{
+      e.stopPropagation();
+      if(!confirm('حذف الفريق؟ (بيانات الموظفين المرتبطين به هتفضل موجودة، بس هيبقوا بدون فريق محدد)')) return;
+      await apiDelete('teams', b.dataset.delteam);
+      render();
+    }));
+  }
+
+  async function openTeamDetailModal(teamId){
+    const teams = await getData('teams');
+    const team = teams.find(t=>t.id===teamId);
+    if(!team) return;
+    const employees = await getData('employees');
+    const members = employees.filter(e=>normTeam(e.team)===normTeam(team.name));
+
+    const modalBg = document.createElement('div');
+    modalBg.className = 'modal-bg';
+    modalBg.innerHTML = `<div class="modal">
+      <h3>🧩 ${esc(team.name)}</h3>
+      <div class="detail-grid">
+        <div class="detail-item"><div class="k">القسم</div><div class="v">${esc(team.department||'—')}</div></div>
+        <div class="detail-item"><div class="k">قائد الفريق</div><div class="v">${esc(team.leader||'—')}</div></div>
+        <div class="detail-item"><div class="k">عدد الأعضاء</div><div class="v">${members.length}</div></div>
+      </div>
+      ${team.notes? `<div style="margin-top:14px;">
+          <div class="k" style="font-size:11px;color:var(--muted);margin-bottom:4px;">ملاحظات</div>
+          <div>${esc(team.notes).replace(/\n/g,'<br/>')}</div>
+        </div>` : ''}
+      <div style="margin-top:18px;">
+        <h4 style="margin:0 0 10px;font-size:14px;font-weight:800;color:var(--navy-900);">👥 أعضاء الفريق</h4>
+        ${members.length? `<div class="table-wrap"><table>
+            <thead><tr><th>الاسم</th><th>القسم</th><th>الهاتف</th><th>الحالة</th></tr></thead>
+            <tbody>${members.map(m=>`<tr>
+              <td>${esc(m.name)}</td>
+              <td>${esc(ROLE_LABELS[m.department]||m.department||'—')}</td>
+              <td>${esc(m.phone||'—')}</td>
+              <td>${m.status==='inactive'? '<span class="badge red">غير نشط</span>':'<span class="badge green">نشط</span>'}</td>
+            </tr>`).join('')}</tbody>
+          </table></div>`
+        : '<div class="empty-state">لا يوجد أعضاء في هذا الفريق</div>'}
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="close-team-detail-btn">إغلاق</button>
+      </div>
+    </div>`;
+    document.body.appendChild(modalBg);
+    modalBg.querySelector('#close-team-detail-btn').addEventListener('click', ()=>modalBg.remove());
+    modalBg.addEventListener('click', e=>{ if(e.target===modalBg) modalBg.remove(); });
   }
 
 
