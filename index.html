@@ -436,9 +436,14 @@
         {key:'repStatus', label:'حالة المندوب', type:'select', options:['فعال','غير فعال']},
         {key:'company', label:'الشركة', type:'dynamicSelect', ref:'visits', refField:'companyName'},
         {key:'status', label:'الحالة', type:'select', options:['جديد','تم التواصل','تحويل لحجز','مشترك']},
-        {key:'receiptNumber', label:'رقم الإيصال', type:'text', showWhenSubscribed:true},
-        {key:'receiptBranch', label:'الفرع المسدد فيه', type:'text', showWhenSubscribed:true},
-        {key:'receiptDate', label:'تاريخ الإيصال', type:'date', showWhenSubscribed:true},
+        {key:'omegaCode', label:'كود أوميجا', type:'text', showWhenSubscribed:true},
+        {key:'paymentDate', label:'تاريخ الدفع', type:'date', showWhenSubscribed:true},
+        {key:'packageType', label:'نوع الباقة', type:'select', showWhenSubscribed:true,
+          options:['','عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان','حج قرعة تيسير','حج قرعة عادي','حج سياحي']},
+        {key:'subscriptionValue', label:'قيمة الاشتراك', type:'number', showWhenSubscribed:true},
+        {key:'installmentAmount', label:'قيمة القسط (اختياري)', type:'number', showWhenSubscribed:true, optionalWhenSubscribed:true},
+        {key:'installmentMonths', label:'عدد شهور التقسيط (اختياري)', type:'number', showWhenSubscribed:true, optionalWhenSubscribed:true},
+        {key:'downPayment', label:'المقدم (اختياري)', type:'number', showWhenSubscribed:true, optionalWhenSubscribed:true},
         {key:'sourceType', label:'وصل عن طريق', type:'select',
           options:['مندوب','علاقات عامة','الاستقبال','الإعلام']},
         {key:'responsiblePerson', label:'اسم المسؤول عنه', type:'dynamicSelect', ref:'employees', refField:'name'},
@@ -505,11 +510,11 @@
         {key:'groupName', label:'اسم المجموعة', type:'text'},
         {key:'responsiblePerson', label:'المسؤول', type:'dynamicSelect', ref:'employees', refField:'name'},
         {key:'subscriptionDate', label:'تاريخ الاشتراك', type:'date', required:true},
-        {key:'receiptNumber', label:'رقم الإيصال', type:'text'},
-        {key:'receiptBranch', label:'الفرع المسدد فيه', type:'text'},
-        {key:'receiptDate', label:'تاريخ الإيصال', type:'date'},
+        {key:'omegaCode', label:'كود أوميجا', type:'text'},
+        {key:'paymentDate', label:'تاريخ الدفع', type:'date'},
         {key:'packageType', label:'نوع الباقة', type:'select',
           options:['','عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان','حج قرعة تيسير','حج قرعة عادي','حج سياحي']},
+        {key:'subscriptionValue', label:'قيمة الاشتراك', type:'number'},
         {key:'installmentMonths', label:'عدد شهور التقسيط', type:'number'},
         {key:'installmentAmount', label:'قيمة القسط', type:'number'},
         {key:'downPayment', label:'المقدم', type:'number'},
@@ -1286,13 +1291,19 @@
   async function maybeCreateSubscriptionFromLead(lead){
     if(lead.type!=='مهتم' || lead.status!=='مشترك') return;
     const subs=await getData('subscriptions');
-    const receiptPart={receiptNumber:lead.receiptNumber||'', receiptBranch:lead.receiptBranch||'',
-      receiptDate:lead.receiptDate||''};
+    const receiptPart={omegaCode:lead.omegaCode||'', paymentDate:lead.paymentDate||'',
+      packageType:lead.packageType||'', subscriptionValue:lead.subscriptionValue||'',
+      installmentAmount:lead.installmentAmount||'', installmentMonths:lead.installmentMonths||'',
+      downPayment:lead.downPayment||''};
     const existingSub = subs.find(s=>String(s.leadId||'')===String(lead.id));
     if(existingSub){
-      // بنكتب بس لو بيانات الإيصال اتغيّرت فعلًا (تقليل الكتابة على الشيت).
-      if(Object.keys(receiptPart).some(k=>String(existingSub[k]||'')!==String(receiptPart[k]||'')))
-        await apiUpdate('subscriptions',{...existingSub,...receiptPart});
+      // بنكتب بس القيم المتغيّرة فعلًا (تقليل الكتابة على الشيت)، ومانمسحش قيمة
+      // موجودة في الاشتراك لو الحقل فاضي في المهتم.
+      const changed = {};
+      Object.keys(receiptPart).forEach(k=>{
+        if(String(receiptPart[k]) !== '' && String(existingSub[k]||'')!==String(receiptPart[k])) changed[k]=receiptPart[k];
+      });
+      if(Object.keys(changed).length) await apiUpdate('subscriptions',{...existingSub,...changed});
       return;
     }
     const sub={
@@ -1300,7 +1311,6 @@
       id:uid(), leadId:lead.id, customerName:lead.name||'', nationalId:lead.nationalId||'', phone:lead.phone||'',
       gender:'', governorate:'', groupName:'',
       responsiblePerson:lead.responsiblePerson||'', subscriptionDate:todayISO(),
-      packageType:'', installmentMonths:'', installmentAmount:'', downPayment:'',
       lotteryStatus:'لم يُحسم بعد', travelStatus:'لم يسافر',
       subscriptionStatus:'نشط', notes:lead.notes||''
     };
@@ -4049,11 +4059,13 @@
         }
         Object.keys(forcedValues).forEach(k=>{ newRow[k] = forcedValues[k]; });
 
-        // تحويل مهتم → مشترك: بيانات الإيصال (الرقم والفرع والتاريخ) إجبارية.
+        // تحويل مهتم → مشترك: كود أوميجا وتاريخ الدفع ونوع الباقة وقيمة الاشتراك إجبارية
+        // (قيمة القسط وعدد الشهور والمقدم اختيارية).
         if(key==='indoor_leads' && newRow.type==='مهتم' && newRow.status==='مشترك'){
-          if(!String(newRow.receiptNumber||'').trim()) throw new Error('رقم الإيصال مطلوب عند تحويل المهتم إلى مشترك');
-          if(!String(newRow.receiptBranch||'').trim()) throw new Error('الفرع المسدد فيه مطلوب عند تحويل المهتم إلى مشترك');
-          if(!newRow.receiptDate) throw new Error('تاريخ الإيصال مطلوب عند تحويل المهتم إلى مشترك');
+          if(!String(newRow.omegaCode||'').trim()) throw new Error('كود أوميجا مطلوب عند تحويل المهتم إلى مشترك');
+          if(!newRow.paymentDate) throw new Error('تاريخ الدفع مطلوب عند تحويل المهتم إلى مشترك');
+          if(!String(newRow.packageType||'').trim()) throw new Error('نوع الباقة مطلوب عند تحويل المهتم إلى مشترك');
+          if(!String(newRow.subscriptionValue||'').trim()) throw new Error('قيمة الاشتراك مطلوبة عند تحويل المهتم إلى مشترك');
         }
 
         // تاريخ الاشتراك / التسجيل بيتحط تلقائيًا بتاريخ اليوم وقت الإضافة بس،
@@ -4171,14 +4183,14 @@
       inner = `<input type="text" name="${f.key}" value="${esc(val)}" readonly style="background:#eee;cursor:not-allowed"/>`;
     } else {
 
-      inner = `<input type="${f.type}" name="${f.key}" value="${esc(val)}" ${f.required?'required':''}/>`;
+      inner = `<input type="${f.type}" name="${f.key}" value="${esc(val)}" ${f.type==='number'?'step="any"':''} ${f.required?'required':''}/>`;
     }
     let extra = '';
     if(f.showWhenSubscribed){
       const on = row && row.type==='مهتم' && row.status==='مشترك';
       extra = ` data-receipt-group="1" style="${on?'':'display:none;'}"`;
     }
-    const star = f.showWhenSubscribed ? ' <span class="receipt-star" style="color:#c0392b;">*</span>' : '';
+    const star = (f.showWhenSubscribed && !f.optionalWhenSubscribed) ? ' <span class="receipt-star" style="color:#c0392b;">*</span>' : '';
     return `<div class="field ${full}"${extra}><label>${esc(f.label)}${star}</label>${inner}</div>`;
   }
 
