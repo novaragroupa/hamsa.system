@@ -827,9 +827,11 @@
     render();
   }
   let refreshBusy = false;
+  const refreshLater = new Set();
   async function refreshTables(tables){
     const keys = [...new Set(tables)].filter(t=>cache[t] && canReadTable(t));
-    if(!keys.length || !state.user || refreshBusy) return [];
+    if(!keys.length || !state.user) return [];
+    if(refreshBusy){ keys.forEach(t=>refreshLater.add(t)); return []; } // مايتضيعش: يتنفذ بعد الحالي
     refreshBusy = true;
     const gen = dataGen, t0 = Date.now(), changed = [];
     try{
@@ -847,6 +849,7 @@
         }catch(e){ console.warn('background refresh failed', e); }
       }));
     } finally { refreshBusy=false; lastRefresh=Date.now(); }
+    if(refreshLater.size){ const again=[...refreshLater]; refreshLater.clear(); setTimeout(()=>refreshTables(again), 200); }
     if(!state.user){ render(); return changed; }
     if(changed.length) onDataChanged(changed);
     return changed;
@@ -1029,12 +1032,12 @@
   });
   window.addEventListener('online', ()=>{ if(syncQ.length) pumpSync(); if(state.user) refreshAll(); });
   document.addEventListener('visibilitychange', ()=>{
-    if(!document.hidden && state.user && !syncQ.length && Date.now()-lastRefresh>60000) refreshAll();
+    if(!document.hidden && state.user && !syncQ.length && Date.now()-lastRefresh>90000) refreshAll();
   });
   setInterval(()=>{
     if(!state.user || document.hidden) return;
     if(needRerender && !isUserBusy() && !syncQ.length){ needRerender=false; render(); }
-    if(!syncQ.length && !prefetching && Date.now()-lastRefresh>180000) refreshAll();
+    if(!syncQ.length && !prefetching && Date.now()-lastRefresh>240000) refreshAll();
   }, 30000);
 
   /* ---------------- عمليات البيانات (فورية + مزامنة في الخلفية) ---------------- */
