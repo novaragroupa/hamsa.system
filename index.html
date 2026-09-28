@@ -383,7 +383,7 @@
       fields:[
         {key:'name', label:'اسم الفريق', type:'text', required:true},
         {key:'department', label:'القسم', type:'select', options:Object.values(ROLE_LABELS)},
-        {key:'leader', label:'قائد الفريق (Team Leader)', type:'dynamicSelect', ref:'employees', refField:'name'},
+        {key:'leader', label:'قائد الفريق', type:'dynamicSelect', ref:'employees', refField:'name'},
         {key:'notes', label:'ملاحظات', type:'textarea'},
       ]},
     employees:{ title:'الموظفون', icon:'👥', roles:['admin','hr','pr_manager','pr_leader','pr_member'],
@@ -417,7 +417,7 @@
         {key:'area', label:'المنطقة', type:'select', options:ALEX_AREAS},
         {key:'businessType', label:'طبيعة عمل الشركة', type:'text'},
         {key:'brokerName', label:'اسم الوسيط', type:'text'},
-        {key:'visitedBy', label:'الموظف اللي عمل الزيارة', type:'dynamicSelect',
+        {key:'visitedBy', label:'الموظف القائم بالزيارة', type:'dynamicSelect',
           ref:'employees', refField:'name'},
         {key:'date', label:'تاريخ الزيارة', type:'date'},
         {key:'status', label:'حالة الزيارة', type:'select',
@@ -425,7 +425,7 @@
         {key:'followups', label:'متابعات الزيارة', type:'followups'},
         {key:'notes', label:'ملاحظات', type:'textarea'},
       ]},
-    indoor_leads:{ title:'المهتمون والمندوبين', icon:'🎯', roles:['admin','pr_in','pr_manager','pr_leader','pr_member'],
+    indoor_leads:{ title:'المهتمون والمندوبون', icon:'🎯', roles:['admin','pr_in','pr_manager','pr_leader','pr_member'],
       fields:[
         {key:'name', label:'الاسم', type:'text', required:true},
         {key:'code', label:'كود العميل', type:'readonly'},
@@ -436,14 +436,14 @@
         {key:'repStatus', label:'حالة المندوب', type:'select', options:['فعال','غير فعال']},
         {key:'company', label:'الشركة', type:'dynamicSelect', ref:'visits', refField:'companyName'},
         {key:'status', label:'الحالة', type:'select', options:['جديد','تم التواصل','تحويل لحجز','مشترك']},
-        {key:'sourceType', label:'جاي عن طريق', type:'select',
-          options:['مندوب','علاقات عامة','ريسبشن','ميديا']},
+        {key:'sourceType', label:'وصل عن طريق', type:'select',
+          options:['مندوب','علاقات عامة','الاستقبال','الإعلام']},
         {key:'responsiblePerson', label:'اسم المسؤول عنه', type:'dynamicSelect', ref:'employees', refField:'name'},
         {key:'managerRep', label:' تحت إشراف مندوب', type:'dynamicSelect',
           ref:'indoor_leads', refField:'name', filter:{field:'type', value:'مندوب'}},
         {key:'notes', label:'ملاحظات', type:'textarea'},
       ]},
-    indoor_data:{ title:'الداتا والأرقام', icon:'📊', roles:['admin','pr_in','pr_manager','pr_leader','pr_member'],
+    indoor_data:{ title:'البيانات والأرقام', icon:'📊', roles:['admin','pr_in','pr_manager','pr_leader','pr_member'],
       fields:[
         {key:'name', label:'الاسم', type:'text'},
         {key:'phone', label:'رقم الهاتف', type:'text', required:true},
@@ -452,13 +452,13 @@
           ref:'employees', refField:'name', filter:{field:'department', value:'علاقات عامة - إن دور'}},
         {key:'notes', label:'ملاحظات', type:'textarea'},
       ]},
-    callcenter_feedback:{ title:'فيدباك عملاء العمرة', icon:'📞', roles:['admin','callcenter'],
+    callcenter_feedback:{ title:'آراء عملاء العمرة', icon:'📞', roles:['admin','callcenter'],
       fields:[
         {key:'clientName', label:'اسم العميل', type:'text', required:true},
         {key:'phone', label:'رقم الهاتف', type:'text'},
         {key:'tripDate', label:'تاريخ الرحلة', type:'date'},
         {key:'rating', label:'التقييم', type:'select', options:['5','4','3','2','1']},
-        {key:'feedback', label:'الفيدباك', type:'textarea'},
+        {key:'feedback', label:'رأي العميل', type:'textarea'},
       ]},
     callcenter_payments:{ title:'متابعة المتأخرين في السداد', icon:'⏰', roles:['admin','callcenter'],
       fields:[
@@ -474,20 +474,20 @@
         {key:'passportNumber', label:'رقم الجواز', type:'text'},
         {key:'trip', label:'الرحلة', type:'text'},
         {key:'daysRemaining', label:'المتبقي (أيام)', type:'number'},
-        {key:'roomOccupants', label:'عدد أفراد الأوضة', type:'number'},
+        {key:'roomOccupants', label:'عدد أفراد الغرفة', type:'number'},
         {key:'hotel', label:'الفندق', type:'text'},
         {key:'flightStatus', label:'حالة حجز الطيران', type:'select', options:['لم يُحجز','تم الحجز']},
       ]},
     trips_hub:{ title:'الرحلات', icon:'🧳', roles:['admin','accommodation','system','accounting','pr_manager','pr_leader','pr_member'],
       fields:[]},
 
-    pr_member_data:{ title:'الداتا والأرقام واللينكات', icon:'🔗', roles:['admin','pr_manager','pr_leader','pr_member'],
+    pr_member_data:{ title:'البيانات والأرقام والروابط', icon:'🔗', roles:['admin','pr_manager','pr_leader','pr_member'],
       fields:[
         {key:'memberId', label:'عضو الفريق', type:'dynamicSelect', ref:'employees', refField:'name'},
-        {key:'title', label:'اسم الداتا / الرقم / اللينك', type:'text', required:true},
+        {key:'title', label:'اسم البيانات / الرقم / الرابط', type:'text', required:true},
         {key:'phone', label:'رقم الهاتف', type:'text'},
         {key:'link', label:'الرابط', type:'url'},
-        {key:'data', label:'تفاصيل الداتا', type:'textarea'},
+        {key:'data', label:'تفاصيل البيانات', type:'textarea'},
         {key:'notes', label:'ملاحظات', type:'textarea'},
       ]},
 
@@ -510,7 +510,7 @@
         {key:'tripId', label:'الرحلة (التسكين)', type:'linkSelect', ref:'trips'},
         {key:'hotelId', label:'الفندق', type:'linkSelect', ref:'accom_hotels', parentKey:'tripId'},
         {key:'roomId', label:'الغرفة', type:'linkSelect', ref:'accom_rooms', parentKey:'hotelId'},
-        {key:'lotteryStatus', label:'حالة القرعة', type:'select', options:['لسه مش عارف','فائز','لم يفز']},
+        {key:'lotteryStatus', label:'حالة القرعة', type:'select', options:['لم يُحسم بعد','فائز','لم يفز']},
         {key:'travelStatus', label:'حالة السفر', type:'select', options:['لم يسافر','سافر']},
         {key:'subscriptionStatus', label:'حالة الاشتراك', type:'select', options:['نشط','مكتمل','ملغي']},
         {key:'notes', label:'ملاحظات', type:'textarea'},
@@ -1261,7 +1261,7 @@
     return key==='employees' && row?.name===myName;
   }
 
-  // "قائد الفريق (Team Leader)" هو الحقل leader الموجود في جدول teams نفسه
+  // "قائد الفريق" هو الحقل leader الموجود في جدول teams نفسه
   // (نفس الحقل المستخدم في فورم الفرق). بنستخدمه هنا عشان نحدد مين اللي
   // يقدر يدخل ويضيف ويعدل في تقارير الزيارات: قائد فريقه بس، أو الأدمن.
   async function isTeamLeader(){
@@ -1286,7 +1286,7 @@
       gender:'', governorate:'', groupName:'',
       responsiblePerson:lead.responsiblePerson||'', subscriptionDate:todayISO(),
       packageType:'', installmentMonths:'', installmentAmount:'', downPayment:'',
-      lotteryStatus:'لسه مش عارف', travelStatus:'لسه مسافر',
+      lotteryStatus:'لم يُحسم بعد', travelStatus:'لم يسافر',
       subscriptionStatus:'نشط', notes:lead.notes||''
     };
     await apiAdd('subscriptions',sub);
@@ -1337,7 +1337,7 @@
     if(renderRun){ renderAgain = true; return renderRun; }
     renderRun = (async()=>{
       try{ do{ renderAgain=false; await renderOnce(); }while(renderAgain); }
-      catch(e){ console.error('render error', e); showToast('تعذّر عرض الصفحة، جرّب مرة أخرى','error'); }
+      catch(e){ console.error('render error', e); showToast('تعذّر عرض الصفحة، حاول مرة أخرى','error'); }
       finally{ renderRun=null; }
     })();
     return renderRun;
@@ -1581,7 +1581,7 @@
     if(!allowed){
       page.innerHTML = `
         <div class="page-head"><h2>📋 تقارير الزيارات</h2></div>
-        <div class="empty-state"><div class="big">🔒</div>تقارير الزيارات متاحة فقط لقائد الفريق (Team Leader) الخاص بك، أو لمدير النظام.</div>`;
+        <div class="empty-state"><div class="big">🔒</div>تقارير الزيارات متاحة فقط لقائد الفريق الخاص بك، أو لمدير النظام.</div>`;
       return;
     }
     await renderModule(page, 'visits', { rowDetail:true });
@@ -1624,7 +1624,7 @@
     }));
     page.querySelectorAll('[data-delteam]').forEach(b=>b.addEventListener('click', async (e)=>{
       e.stopPropagation();
-      if(!confirm('حذف الفريق؟ (بيانات الموظفين المرتبطين به هتفضل موجودة، بس هيبقوا بدون فريق محدد)')) return;
+      if(!confirm('حذف الفريق؟ (ستبقى بيانات الموظفين المرتبطين به محفوظة، لكنهم سيصبحون بلا فريق محدد)')) return;
       await apiDelete('teams', b.dataset.delteam);
       render();
     }));
@@ -1744,7 +1744,7 @@
     page.innerHTML = `
       ${dashHeroHtml()}
       ${statsHtml}
-      ${isPRUser()? `<div class="assumption-note">نظام الصلاحيات الجديد يفصل بيانات العلاقات العامة حسب الفريق والعضو: المدير العام يرى الكل، الـTeam Leader يرى فريقه، وعضو الفريق يرى بياناته ومهتميه فقط.</div>` : ''}
+      ${isPRUser()? `<div class="assumption-note">نظام الصلاحيات الجديد يفصل بيانات العلاقات العامة حسب الفريق والعضو: المدير العام يرى الكل، قائد الفريق يرى فريقه، وعضو الفريق يرى بياناته ومهتميه فقط.</div>` : ''}
       <h3 style="font-size:15px;font-weight:800;color:var(--navy-900);margin:6px 0 14px;">الأقسام المتاحة لك</h3>
       ${sectionsHtml || `<div class="card"><div class="empty-state">لا توجد أقسام متاحة حاليًا</div></div>`}`;
     page.querySelectorAll('[data-go]').forEach(el=>el.addEventListener('click', ()=>{ state.view=el.dataset.go; state.indoorLeadsType=null; render(); }));
@@ -1759,7 +1759,7 @@
     const memberData=await getData('pr_member_data');
     const legacyData=await getData('indoor_data');
     const dataRows=[...memberData, ...legacyData.map(r=>({
-      id:r.id, memberId:r.responsiblePerson||'', title:r.name||'داتا / رقم', phone:r.phone||'',
+      id:r.id, memberId:r.responsiblePerson||'', title:r.name||'بيانات / رقم', phone:r.phone||'',
       link:r.link||'', data:r.source||'', notes:r.notes||''
     }))];
     const subs=await getData('subscriptions');
@@ -1785,8 +1785,8 @@
             <div class="detail-item"><div class="k">الاشتراكات</div><div class="v">${mySubs.length}</div></div>
           </div>
         </div>
-        <div class="card"><div class="page-head"><h3>🔗 داتا ولينكاتي</h3><button class="btn-primary btn-gold" id="my-add-data" style="width:auto;padding:8px 15px;">+ إضافة</button></div>
-          ${myData.length?myData.map(x=>`<div class="link-box"><div><b>${esc(x.title)}</b>${x.data?`<div style="font-size:12px;color:var(--muted)">${esc(x.data)}</div>`:''}</div>${x.link?`<a href="${esc(x.link)}" target="_blank" rel="noopener">فتح الرابط ↗</a>`:''}</div>`).join(''):'<div class="empty-state">لا توجد داتا أو لينكات بعد</div>'}
+        <div class="card"><div class="page-head"><h3>🔗 بياناتي وروابطي</h3><button class="btn-primary btn-gold" id="my-add-data" style="width:auto;padding:8px 15px;">+ إضافة</button></div>
+          ${myData.length?myData.map(x=>`<div class="link-box"><div><b>${esc(x.title)}</b>${x.data?`<div style="font-size:12px;color:var(--muted)">${esc(x.data)}</div>`:''}</div>${x.link?`<a href="${esc(x.link)}" target="_blank" rel="noopener">فتح الرابط ↗</a>`:''}</div>`).join(''):'<div class="empty-state">لا توجد بيانات أو روابط بعد</div>'}
         </div>`;
       document.getElementById('my-add-data').addEventListener('click',()=>openForm('pr_member_data',null));
       return;
@@ -1794,7 +1794,7 @@
 
     page.innerHTML=`
       <div class="page-head"><h2>🧩 ${state.user.role==='pr_manager'?'فرق العلاقات العامة بالكامل':'فريقي'}</h2></div>
-      <div class="assumption-note">المدير العام للعلاقات العامة يرى كل الفرق. الـTeam Leader يرى أعضاء فريقه فقط، وكل بطاقة تفتح تفاصيل العضو والمهتمين والمندوبين والاشتراكات والداتا الخاصة به.</div>
+      <div class="assumption-note">المدير العام للعلاقات العامة يرى كل الفرق. قائد الفريق يرى أعضاء فريقه فقط، وكل بطاقة تفتح تفاصيل العضو والمهتمين والمندوبين والاشتراكات والبيانات الخاصة به.</div>
       <div class="pr-team-grid">
         ${visibleTeams.map(t=>{
           const tm=members.filter(m=>m.team===t.name);
@@ -1836,14 +1836,14 @@
             <div class="detail-item"><div class="k">المهتمون</div><div class="v">${ml.filter(x=>x.type==='مهتم' && x.status!=='مشترك').length}</div></div>
             <div class="detail-item"><div class="k">المندوبون</div><div class="v">${ml.filter(x=>x.type==='مندوب').length}</div></div>
             <div class="detail-item"><div class="k">الاشتراكات</div><div class="v">${ms.length}</div></div>
-            <div class="detail-item"><div class="k">الداتا / الأرقام / اللينكات</div><div class="v">${md.length}</div></div>
+            <div class="detail-item"><div class="k">البيانات / الأرقام / الروابط</div><div class="v">${md.length}</div></div>
           </div>
         </div>
         <div class="card"><div class="page-head"><h3>🎯 مهتمون ومندوبون</h3><button class="btn-primary btn-gold" id="add-member-lead" style="width:auto;padding:8px 15px;">+ إضافة</button></div>
           ${ml.length?`<div class="table-wrap"><table><thead><tr><th>الاسم</th><th>النوع</th><th>الهاتف</th><th>الحالة</th></tr></thead><tbody>${ml.map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.type)}</td><td>${esc(x.phone)}</td><td>${esc(x.status)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty-state">لا توجد بيانات</div>'}
         </div>
-        <div class="card"><div class="page-head"><h3>🔗 الداتا والأرقام واللينكات</h3><button class="btn-primary btn-gold" id="add-member-data" style="width:auto;padding:8px 15px;">+ إضافة</button></div>
-          ${md.length?md.map(x=>`<div class="link-box"><div><b>${esc(x.title)}</b>${x.phone?`<div style="font-size:12px;margin-top:3px">📞 ${esc(x.phone)}</div>`:''}<div style="font-size:12px;color:var(--muted)">${esc(x.data||x.notes||'')}</div></div>${x.link?`<a href="${esc(x.link)}" target="_blank" rel="noopener">فتح ↗</a>`:''}</div>`).join(''):'<div class="empty-state">لا توجد داتا</div>'}
+        <div class="card"><div class="page-head"><h3>🔗 البيانات والأرقام والروابط</h3><button class="btn-primary btn-gold" id="add-member-data" style="width:auto;padding:8px 15px;">+ إضافة</button></div>
+          ${md.length?md.map(x=>`<div class="link-box"><div><b>${esc(x.title)}</b>${x.phone?`<div style="font-size:12px;margin-top:3px">📞 ${esc(x.phone)}</div>`:''}<div style="font-size:12px;color:var(--muted)">${esc(x.data||x.notes||'')}</div></div>${x.link?`<a href="${esc(x.link)}" target="_blank" rel="noopener">فتح ↗</a>`:''}</div>`).join(''):'<div class="empty-state">لا توجد بيانات</div>'}
         </div>
         <div class="card"><h3>💳 اشتراكات العضو</h3>
           ${ms.length?`<div class="table-wrap"><table><thead><tr><th>العميل</th><th>التاريخ</th><th>الباقة</th><th>الحالة</th></tr></thead><tbody>${ms.map(x=>`<tr><td>${esc(x.customerName)}</td><td>${esc(fmtDate(x.subscriptionDate))}</td><td>${esc(x.packageType)}</td><td>${esc(x.subscriptionStatus)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty-state">لا توجد اشتراكات</div>'}
@@ -2194,7 +2194,7 @@
           <div class="stat-number" style="font-size:22px;margin-bottom:10px;">${periodRows.length} سجل — ${esc(periodTitle)}</div>
           ${periodRows.length ? `<div class="table-wrap"><table><thead><tr>${cols.map(c=>`<th>${esc(c.label)}</th>`).join('')}</tr></thead>
             <tbody>${periodRows.map(r=>`<tr>${cols.map(c=>`<td>${fieldDisplay(c, r[c.key], {}, r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`
-          : `<div class="empty-state" style="padding:20px;"><div class="big">📭</div>مفيش حاجة اتسجلت في الفترة دي</div>`}
+          : `<div class="empty-state" style="padding:20px;"><div class="big">📭</div>لا توجد سجلات في هذه الفترة</div>`}
           </div>
         </div>`;
       }
@@ -2212,14 +2212,14 @@
 
       bodyHtml = `
         <div class="page-head" style="margin-bottom:14px;">
-          <div class="analytics-filterbar">${filtersHtml || '<span style="color:var(--muted);font-size:13px;">لا توجد فلاتر متاحة لهذا المصدر</span>'}</div>
+          <div class="analytics-filterbar">${filtersHtml || '<span style="color:var(--muted);font-size:13px;">لا توجد خيارات تصفية لهذا المصدر</span>'}</div>
           <div style="display:flex;gap:8px;">
-            ${filterFields.length? `<button class="btn-secondary" id="clear-filters" style="width:auto;padding:9px 16px;">✖ مسح الفلاتر</button>`:''}
+            ${filterFields.length? `<button class="btn-secondary" id="clear-filters" style="width:auto;padding:9px 16px;">✖ مسح التصفية</button>`:''}
             <button class="icon-btn del" id="del-board-btn">🗑️ حذف اللوحة</button>
           </div>
         </div>
         ${dailyLogHtml}
-        ${dateField? `<div class="assumption-note" style="margin-bottom:14px;">الفترة المختارة أعلاه (يوم / إجمالي الشهر / إجمالي السنة) بتتحكم كمان في عناصر التحليل بالأسفل.</div>` : ''}
+        ${dateField? `<div class="assumption-note" style="margin-bottom:14px;">تتحكم الفترة المختارة أعلاه (يوم / إجمالي الشهر / إجمالي السنة) في عناصر التحليل الموجودة أدناه أيضًا.</div>` : ''}
         <div class="widgets-grid">
           ${widgetCards}
           <button class="widget-card add-widget-card" id="add-widget-btn">➕<br/>إضافة عنصر تحليل</button>
@@ -2355,7 +2355,7 @@
             ${dims.map(d=>`<option value="${d.key}" ${widget&&widget.groupBy===d.key?'selected':''}>${esc(d.label)}</option>`).join('')}
           </select>
         </div>
-        <div class="field"><label>المعدل (Metric)</label>
+        <div class="field"><label>المقياس (Metric)</label>
           <select name="metric" id="metric-select">
             <option value="count" ${!widget||widget.metric==='count'?'selected':''}>عدد السجلات</option>
             ${metricFields.length? `<option value="sum" ${widget&&widget.metric==='sum'?'selected':''}>مجموع حقل رقمي</option>` : ''}
@@ -2650,7 +2650,7 @@
       </div>
       <div class="progress-track"><div class="progress-fill" style="width:${pct}%;background:${remaining===0?'var(--success)':'var(--navy-600)'};"></div></div>`;
     let badge;
-    if(remaining === 0) badge = `<div class="countdown-badge cd-done">✔ تم اكتمال الرحلة${over? ' (زيادة '+over+')' : ''}</div>`;
+    if(remaining === 0) badge = `<div class="countdown-badge cd-done">✔ اكتملت الرحلة${over? ' (زيادة '+over+')' : ''}</div>`;
     else if(remaining <= 3) badge = `<div class="countdown-badge cd-urgent">⏳ متبقي ${remaining} على اكتمال الرحلة</div>`;
     else if(remaining <= 10) badge = `<div class="countdown-badge cd-soon">⏳ متبقي ${remaining} على اكتمال الرحلة</div>`;
     else badge = `<div class="countdown-badge cd-ok">⏳ متبقي ${remaining} على اكتمال الرحلة</div>`;
@@ -2765,7 +2765,7 @@
     }));
     page.querySelectorAll('[data-unlink]').forEach(b=>b.addEventListener('click', async (e)=>{
       e.stopPropagation();
-      if(!confirm('إلغاء ربط هذا الفندق بالرحلة؟ (الفندق وغرفه هيفضلوا موجودين في التسكين، وهيتحذف بس نزلاء هذه الرحلة في غرفه)')) return;
+      if(!confirm('إلغاء ربط هذا الفندق بالرحلة؟ (سيبقى الفندق وغرفه في قسم التسكين، وسيُحذف فقط نزلاء هذه الرحلة من غرفه)')) return;
       const lid = b.dataset.unlink;
       const link = links.find(l=>l.id===lid);
       if(link){
@@ -2785,7 +2785,7 @@
       const modalBg = document.createElement('div');
       modalBg.className = 'modal-bg';
       modalBg.innerHTML = `<div class="modal"><h3>ربط فندق بالرحلة</h3>
-        <div class="assumption-note">اختر فندقًا موجودًا بالفعل في "التسكين"، أو أنشئ فندقًا جديدًا مباشرة من هنا وسيُضاف تلقائيًا لمخزون التسكين ويُربط بهذه الرحلة، من غير ما ينعمل فندق مكرر.</div>
+        <div class="assumption-note">اختر فندقًا موجودًا بالفعل في "التسكين"، أو أنشئ فندقًا جديدًا مباشرة من هنا وسيُضاف تلقائيًا إلى قسم التسكين ويُربط بهذه الرحلة دون تكرار الفندق.</div>
         <form id="link-hotel-form"><div class="form-grid">
           <div class="field full"><label>اختر فندق موجود</label>
             <select name="existingHotel">
@@ -2794,7 +2794,7 @@
             </select>
           </div>
           <div class="field full" style="text-align:center;color:var(--muted);font-size:13px;">— أو —</div>
-          <div class="field full"><label>اسم فندق جديد</label><input name="newHotelName" placeholder="اتركه فارغًا لو هتختار من القائمة"/></div>
+          <div class="field full"><label>اسم فندق جديد</label><input name="newHotelName" placeholder="اتركه فارغًا إذا اخترت فندقًا من القائمة"/></div>
           <div class="field full"><label>مكان الفندق الجديد</label><input name="newHotelLocation"/></div>
         </div>
         <div class="modal-actions"><button type="button" class="btn-secondary" id="cancel-btn">إلغاء</button>
@@ -2948,8 +2948,8 @@
     page.innerHTML = `
       <div class="page-head"><h2>${mod.icon} ${esc(mod.title)}</h2></div>
       <div class="sheet-toolbar">
-        ${sheetLink? `<a href="${esc(sheetLink)}" target="_blank" rel="noopener" class="icon-btn" style="background:var(--sand-100);">📄 فتح شيت الموظفين</a>` : ''}
-        ${canEditLink? `<button class="icon-btn" id="set-link-btn" style="background:var(--sand-100);">🔗 ${sheetLink?'تعديل رابط الشيت':'ربط شيت خارجي'}</button>`:''}
+        ${sheetLink? `<a href="${esc(sheetLink)}" target="_blank" rel="noopener" class="icon-btn" style="background:var(--sand-100);">📄 فتح جدول الموظفين</a>` : ''}
+        ${canEditLink? `<button class="icon-btn" id="set-link-btn" style="background:var(--sand-100);">🔗 ${sheetLink?'تعديل رابط الجدول':'ربط جدول خارجي'}</button>`:''}
         <button class="btn-primary btn-gold" id="add-row-btn" style="width:auto;padding:9px 18px;">+ صف جديد</button>
       </div>
       <div class="card" style="padding:0;overflow:hidden;">
@@ -2962,7 +2962,7 @@
 
     if(canEditLink){
       document.getElementById('set-link-btn').addEventListener('click', async ()=>{
-        const val = prompt('ضع رابط شيت جوجل الخاص بالموظفين (Google Sheet URL):', sheetLink||'');
+        const val = prompt('أدخل رابط جدول جوجل الخاص بالموظفين (Google Sheet URL):', sheetLink||'');
         if(val===null) return;
         await setSetting('indoor_data_sheet_link', val.trim());
         render();
@@ -3018,7 +3018,7 @@
       {key:'gender', label:'الجنس', options:['ذكر','أنثى']},
       {key:'governorate', label:'المحافظة', options:EGYPT_GOVERNORATES},
       {key:'packageType', label:'نوع الباقة', options:['عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان','حج قرعة تيسير','حج قرعة عادي','حج سياحي']},
-      {key:'travelStatus', label:'حالة السفر', options:['لسه مسافر','سافر']},
+      {key:'travelStatus', label:'حالة السفر', options:['لم يسافر','سافر']},
     ];
     state.winnersFilters = state.winnersFilters || {};
     const activeFilters = state.winnersFilters;
@@ -3034,14 +3034,14 @@
       return term? searchIndex.filter(x=>x.text.includes(term)).map(x=>x.row) : columnFilteredData;
     };
     const tableHtml=rows=>!rows.length
-      ? `<div class="empty-state"><div class="big">${data.length?'🔍':'🏆'}</div>${data.length?'لا توجد نتائج مطابقة للبحث/الفلتر':'لا يوجد فائزون حتى الآن'}</div>`
+      ? `<div class="empty-state"><div class="big">${data.length?'🔍':'🏆'}</div>${data.length?'لا توجد نتائج مطابقة للبحث أو التصفية':'لا يوجد فائزون حتى الآن'}</div>`
       : `<div class="table-wrap"><table><thead><tr><th>العميل</th><th>نوع الاشتراك</th><th>الهاتف</th><th>الرقم القومي</th><th>الجنس</th><th>المحافظة</th><th>حالة القرعة</th><th>الرحلة</th><th>الفندق</th><th>الغرفة</th><th>حالة السفر</th><th></th></tr></thead><tbody>${rows.map(r=>`<tr>
         <td>${esc(r.customerName||'')}</td><td>${esc(r.packageType||'')}</td><td>${esc(r.phone||'')}</td><td>${esc(r.nationalId||'')}</td><td>${esc(r.gender||'')}</td><td>${esc(r.governorate||'')}</td>
         <td><span class="badge gold">فائز</span></td>
         <td>${canEditWinners
           ? `<select class="winner-trip-select" data-id="${esc(r.id)}" style="min-width:180px"><option value="">— بدون رحلة —</option>${trips.map(t=>`<option value="${esc(t.id)}" ${String(t.id)===String(r.tripId||'')?'selected':''}>${esc(linkLabel('trips',t))}</option>`).join('')}</select>`
           : esc(tripMap[r.tripId]||'—')}</td>
-        <td>${esc(hotelMap[r.hotelId]||'—')}</td><td>${esc(roomMap[r.roomId]||'—')}</td><td>${esc(r.travelStatus||'لسه مسافر')}</td>
+        <td>${esc(hotelMap[r.hotelId]||'—')}</td><td>${esc(roomMap[r.roomId]||'—')}</td><td>${esc(r.travelStatus||'لم يسافر')}</td>
         <td>${canEditWinners ? `<button class="icon-btn" data-winner-edit="${esc(r.id)}">✏️</button>` : ''}</td>
       </tr>`).join('')}</tbody></table></div>`;
     const filterBarHtml = `<div class="analytics-filterbar" id="winners-filterbar" style="margin-top:10px;${Object.values(activeFilters).some(v=>v)?'':'display:none;'}">
@@ -3052,7 +3052,7 @@
           ${f.options.map(o=>`<option value="${esc(o)}" ${o===cur?'selected':''}>${esc(o)}</option>`).join('')}
         </select>`;
       }).join('')}
-      <button class="btn-secondary" id="clear-winners-filters" style="width:auto;padding:8px 14px;">✖ مسح الفلاتر</button>
+      <button class="btn-secondary" id="clear-winners-filters" style="width:auto;padding:8px 14px;">✖ مسح التصفية</button>
     </div>`;
     page.innerHTML=`<div class="page-head"><h2>🏆 الفائزون</h2></div>
       ${isPRUser()&&state.user.role!=='pr_manager'?`<div class="assumption-note">البيانات المعروضة هنا خاصة بنطاق صلاحيتك.</div>`:''}
@@ -3060,7 +3060,7 @@
       ${data.length?`<div class="card" style="padding:14px 20px;margin-bottom:14px;">
         <div style="display:flex;gap:10px;align-items:center;">
           <input type="text" id="winners-search-input" placeholder="🔍 ابحث في الفائزون..." value="${esc(searchTerm)}" style="flex:1;padding:10px 14px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;background:var(--sand-50);"/>
-          <button class="icon-btn" id="winners-filter-toggle" style="background:var(--sand-100);white-space:nowrap;">🔽 فلتر</button>
+          <button class="icon-btn" id="winners-filter-toggle" style="background:var(--sand-100);white-space:nowrap;">🔽 تصفية</button>
         </div>
         ${filterBarHtml}
       </div>`:''}
@@ -3174,7 +3174,7 @@
     container.querySelectorAll('.assign-room').forEach(sel=>handle(sel,(row,val)=>({...row, roomId:val})));
   }
 
-  /* ---------------- المهتمون والمندوبين: بوابة اختيار بين مربعين ---------------- */
+  /* ---------------- المهتمون والمندوبون: بوابة اختيار بين مربعين ---------------- */
   async function renderIndoorLeadsSection(page){
     if(!state.indoorLeadsType){
       await renderIndoorLeadsHub(page);
@@ -3183,7 +3183,7 @@
         forcedFilter: {type: state.indoorLeadsType},
         forcedAddValues: {type: state.indoorLeadsType},
         excludeWhere: state.indoorLeadsType==='مهتم' ? (r=>r.status==='مشترك') : null,
-        crumbs: [{label:'المهتمون والمندوبين'},{label: state.indoorLeadsType==='مهتم'?'المهتمون':'المندوبين'}],
+        crumbs: [{label:'المهتمون والمندوبون'},{label: state.indoorLeadsType==='مهتم'?'المهتمون':'المندوبون'}],
         crumbHandlers: [ ()=>{ state.indoorLeadsType=null; render(); } ]
       });
     }
@@ -3198,7 +3198,7 @@
     const repsCount = data.filter(r=>r.type==='مندوب').length;
     page.innerHTML = `
       <div class="page-head"><h2>${mod.icon} ${esc(mod.title)}</h2></div>
-      <div class="assumption-note">اختر القسم اللي عاوز تدخله: المهتمون أو المندوبين. جوه كل قسم تقدر تشوف كل البيانات الخاصة بيه وتضيف سجل جديد بنفس النوع تلقائيًا.</div>
+      <div class="assumption-note">اختر القسم الذي تريد الدخول إليه: المهتمون أو المندوبون. داخل كل قسم يمكنك عرض جميع بياناته وإضافة سجل جديد من النوع نفسه تلقائيًا.</div>
       <div class="hub-choice-grid">
         <div class="hub-choice-card click-card" data-type="مهتم">
           <div class="hub-choice-icon">🎯</div>
@@ -3207,7 +3207,7 @@
         </div>
         <div class="hub-choice-card click-card" data-type="مندوب">
           <div class="hub-choice-icon">🧑‍💼</div>
-          <div class="hub-choice-title">المندوبين</div>
+          <div class="hub-choice-title">المندوبون</div>
           <div class="hub-choice-count">${repsCount} سجل</div>
         </div>
       </div>`;
@@ -3228,7 +3228,7 @@
   }
 
   /* ---------------- فلترة التاريخ (يوم / شهر لشهر / سنة لسنة) للموديولات
-     المحدد لها حقل تاريخ: المهتمون والمندوبين، فيدباك عملاء العمرة، الاشتراكات ---------------- */
+     المحدد لها حقل تاريخ: المهتمون والمندوبون، آراء عملاء العمرة، الاشتراكات ---------------- */
   const MODULE_DATE_FILTER_FIELD = {
     indoor_leads: 'registrationDate',
     callcenter_feedback: 'tripDate',
@@ -3359,7 +3359,7 @@
     const columnFilteredData = applyColumnFilters(data, activeFilters);
 
     // فلتر التاريخ (يوم / شهر لشهر / سنة لسنة) — للموديولات المحددة فقط
-    // (المهتمون والمندوبين، فيدباك عملاء العمرة، الاشتراكات).
+    // (المهتمون والمندوبون، آراء عملاء العمرة، الاشتراكات).
     const dateFieldKey = MODULE_DATE_FILTER_FIELD[key] || null;
     const supportsDateFilter = !!dateFieldKey;
     state.moduleDateFilter = state.moduleDateFilter || {};
@@ -3404,7 +3404,7 @@
 
     const tableSectionHtml = (visibleData)=>{
       if(!data.length) return `<div class="empty-state"><div class="big">📭</div>لا توجد بيانات بعد — ابدأ بالإضافة</div>`;
-      if(!visibleData.length) return `<div class="empty-state"><div class="big">🔍</div>لا توجد نتائج مطابقة للبحث/الفلتر</div>`;
+      if(!visibleData.length) return `<div class="empty-state"><div class="big">🔍</div>لا توجد نتائج مطابقة للبحث أو التصفية</div>`;
       state.moduleLimit = state.moduleLimit || {};
       const limit = state.moduleLimit[key] || 200;
       const shown = visibleData.length>limit ? visibleData.slice(0,limit) : visibleData;
@@ -3426,7 +3426,7 @@
             ${opts.map(o=>`<option value="${esc(o)}" ${o===cur?'selected':''}>${esc(o)}</option>`).join('')}
           </select>`;
         }).join('')}
-        <button class="btn-secondary" id="clear-module-filters" style="width:auto;padding:8px 14px;">✖ مسح الفلاتر</button>
+        <button class="btn-secondary" id="clear-module-filters" style="width:auto;padding:8px 14px;">✖ مسح التصفية</button>
       </div>` : '';
 
     const dateFilterBarHtml = supportsDateFilter ? `
@@ -3468,15 +3468,15 @@
       ${isPRUser() && state.user.role!=='pr_manager' ? `<div class="assumption-note">البيانات المعروضة هنا خاصة بنطاق صلاحيتك. لا يتم عرض بيانات أعضاء العلاقات العامة الآخرين.</div>`:''}
       ${!canWriteModule && !canAssignTrip ? `<div class="assumption-note">عرض فقط: ليس لديك صلاحية إضافة أو تعديل أو حذف بيانات هنا.</div>`:''}
       ${rowDetail ? `<div class="assumption-note">اضغط على أي صف في الجدول لعرض كل تفاصيله في نافذة منفصلة.</div>` : ''}
-      ${key==='subscriptions' && !options.forcedFilter ? `<div class="assumption-note">الاشتراك بيتولد تلقائيًا فقط عند تغيير حالة المهتم إلى "مشترك" من قسم المهتمون والمندوبين — بعدها هيختفي من قائمة المهتمين ويظهر هنا عشان تكمل بياناته. أي اشتراك تتغيّر حالته إلى "ملغي" بيختفي من هنا ويظهر في "الاشتراكات الملغاة".</div>` : ''}
-      ${key==='subscriptions' && options.forcedFilter && options.forcedFilter.subscriptionStatus==='ملغي' ? `<div class="assumption-note">الاشتراكات هنا حالتها "ملغي". لو رجّعت حالة أي اشتراك منها إلى "نشط" أو "مكتمل" من فورم التعديل، هيرجع تلقائيًا لقائمة "الاشتراكات" العادية.</div>` : ''}
-      ${canAssignTrip ? `<div class="assumption-note">تقدر هنا تحدد الرحلة والفندق والغرفة لكل مشترك فقط — باقي بيانات المشترك للعرض.</div>`:''}
+      ${key==='subscriptions' && !options.forcedFilter ? `<div class="assumption-note">يُنشأ الاشتراك تلقائيًا فقط عند تغيير حالة المهتم إلى "مشترك" من قسم المهتمون والمندوبون، ثم يختفي من قائمة المهتمين ويظهر هنا لاستكمال بياناته. وأي اشتراك تتغير حالته إلى "ملغي" يختفي من هنا ويظهر في "الاشتراكات الملغاة".</div>` : ''}
+      ${key==='subscriptions' && options.forcedFilter && options.forcedFilter.subscriptionStatus==='ملغي' ? `<div class="assumption-note">الاشتراكات المعروضة هنا حالتها "ملغي". إذا أعدت حالة أي اشتراك منها إلى "نشط" أو "مكتمل" من نموذج التعديل، فسيعود تلقائيًا إلى قائمة "الاشتراكات" العادية.</div>` : ''}
+      ${canAssignTrip ? `<div class="assumption-note">يمكنك هنا تحديد الرحلة والفندق والغرفة لكل مشترك فقط، أما باقي بيانات المشترك فهي للعرض فقط.</div>`:''}
       ${data.length? `<div class="card" style="padding:14px 20px;margin-bottom:14px;">
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
           <input type="text" id="module-search-input" placeholder="🔍 ابحث في ${esc(mod.title)}..." value="${esc(searchTerm)}"
             style="flex:1;min-width:200px;padding:10px 14px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;background:var(--sand-50);"/>
-          ${hasFilterFields? `<button class="icon-btn" id="module-filter-toggle" style="background:var(--sand-100);white-space:nowrap;">🔽 فلتر</button>`:''}
-          ${supportsDateFilter? `<button class="icon-btn" id="module-datefilter-toggle" style="background:var(--sand-100);white-space:nowrap;">📅 فلترة بالتاريخ</button>`:''}
+          ${hasFilterFields? `<button class="icon-btn" id="module-filter-toggle" style="background:var(--sand-100);white-space:nowrap;">🔽 تصفية</button>`:''}
+          ${supportsDateFilter? `<button class="icon-btn" id="module-datefilter-toggle" style="background:var(--sand-100);white-space:nowrap;">📅 التصفية بالتاريخ</button>`:''}
         </div>
         ${filterBarHtml}
         ${dateFilterBarHtml}
@@ -3695,7 +3695,7 @@
           <option value="">اختر...</option>${Object.entries(ROLE_LABELS).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join('')}
         </select></div>
         <div class="field"><label>القسم</label><select name="department"><option value="">اختر...</option>${Object.values(ROLE_LABELS).map(v=>`<option>${esc(v)}</option>`).join('')}</select></div>
-        <div class="field"><label>الرقم الخاص</label><input name="specialNumber" /></div>
+        <div class="field"><label>الرقم القومي</label><input name="specialNumber" /></div>
         <div class="field"><label>رقم الشركة</label><input name="companyNumber" /></div>
         <div class="field"><label>رقم الهاتف</label><input name="phone" /></div>
         <div class="field"><label>العنوان</label><input name="address" /></div>
@@ -3740,9 +3740,9 @@
     modalBg.className = 'modal-bg';
     modalBg.innerHTML = `<div class="modal">
       <h3>تغيير بيانات الدخول</h3>
-      <div class="assumption-note">سيبها فاضية لو مش عايز تغيّرها. لازم تدخل كلمة المرور الحالية للتأكيد.</div>
+      <div class="assumption-note">اتركها فارغة إذا كنت لا ترغب في تغييرها. يجب إدخال كلمة المرور الحالية للتأكيد.</div>
       <form id="change-account-form"><div class="form-grid">
-        <div class="field"><label>اسم المستخدم الجديد (اختياري)</label><input name="newUsername" pattern="[a-zA-Z0-9._-]{3,40}" placeholder="سيبها فاضية لو مش هتغيّر" /></div>
+        <div class="field"><label>اسم المستخدم الجديد (اختياري)</label><input name="newUsername" pattern="[a-zA-Z0-9._-]{3,40}" placeholder="اتركه فارغًا إذا لم ترغب في التغيير" /></div>
         <div class="field"><label>كلمة المرور الجديدة (اختياري)</label><input name="newPassword" type="password" minlength="12" placeholder="12 حرفًا على الأقل" /></div>
         <div class="field full"><label>كلمة المرور الحالية *</label><input name="currentPassword" type="password" required /></div>
       </div>
@@ -3933,7 +3933,7 @@
           if(['indoor_leads','indoor_data','subscriptions'].includes(key) && newRow.responsiblePerson && !names.has(newRow.responsiblePerson))
             throw new Error('لا يمكن ربط البيانات بعضو خارج فريقك');
           if(key==='pr_member_data' && newRow.memberId && !names.has(newRow.memberId))
-            throw new Error('لا يمكن ربط الداتا بعضو خارج فريقك');
+            throw new Error('لا يمكن ربط البيانات بعضو خارج فريقك');
         }
 
         if(isNew) await apiAdd(key, newRow); else await apiUpdate(key, newRow);
