@@ -574,16 +574,16 @@
   // نسخة من صلاحيات القراءة في Code.gs (للاستخدام في التحميل المسبق فقط؛
   // السيرفر هو المرجع الفعلي للصلاحيات).
   const TABLE_READ_ROLES = {
-    teams: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out'],
+    teams: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','accommodation'],
     employees: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','callcenter','accommodation','system','analyst'],
     companies: ['admin','pr_out','pr_in','analyst'],
-    visits: ['admin','pr_out','analyst','pr_in','pr_manager','pr_leader','pr_member'],
-    indoor_leads: ['admin','pr_manager','pr_leader','pr_member','pr_in','analyst'],
+    visits: ['admin','pr_out','analyst','pr_in','pr_manager','pr_leader','pr_member','accommodation'],
+    indoor_leads: ['admin','pr_manager','pr_leader','pr_member','pr_in','analyst','accommodation'],
     indoor_data: ['admin','pr_manager','pr_leader','pr_member','pr_in','analyst'],
-    callcenter_feedback: ['admin','callcenter','analyst'],
+    callcenter_feedback: ['admin','callcenter','analyst','accommodation'],
     callcenter_payments: ['admin','callcenter','analyst'],
     accommodation: ['admin','accommodation','system','analyst'],
-    pr_member_data: ['admin','pr_manager','pr_leader','pr_member','analyst'],
+    pr_member_data: ['admin','pr_manager','pr_leader','pr_member','analyst','accommodation'],
     subscriptions: ['admin','pr_manager','pr_leader','pr_member','analyst','accommodation','accounting'],
     trips: ['admin','accommodation','system','pr_manager','pr_leader','pr_member','analyst','accounting'],
     trip_hotels: ['admin','accommodation','system','pr_manager','pr_leader','pr_member','accounting'],
@@ -1459,7 +1459,7 @@
   }
 
   function analyticsAccessibleModules(){
-    if(state.user.role==='admin' || state.user.role==='analyst') return Object.entries(MODULES).filter(([k])=>!['companies','callcenter_payments','indoor_data'].includes(k));
+    if(['admin','analyst','accommodation'].includes(state.user.role)) return Object.entries(MODULES).filter(([k])=>!['companies','callcenter_payments','indoor_data'].includes(k));
     return accessibleModules();
   }
 
@@ -2179,6 +2179,11 @@
           periodTitle = 'يوم ' + fmtDate(period.day);
         }
         widgetData = periodRows;
+        // الجدول بيترسم 200 صف في المرة (الرسومات فوق بتحسب على كل الصفوف)،
+        // والحد بيرجع 200 لما اللوحة أو الفترة أو التصفية تتغير.
+        const logKey = board.id+'|'+period.mode+'|'+period.day+'|'+period.month+'|'+period.year+'|'+JSON.stringify(state.analyticsFilters);
+        if(state.analyticsLogKey!==logKey){ state.analyticsLogKey=logKey; state.analyticsLogLimit=200; }
+        const logShown = periodRows.length>state.analyticsLogLimit ? periodRows.slice(0,state.analyticsLogLimit) : periodRows;
 
         dailyLogHtml = `<div class="card" style="margin-bottom:18px;">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;${state.analyticsLogOpen?'margin-bottom:12px;':''}">
@@ -2208,7 +2213,7 @@
           </div>` : ''}
           <div class="stat-number" style="font-size:22px;margin-bottom:10px;">${periodRows.length} سجل — ${esc(periodTitle)}</div>
           ${periodRows.length ? `<div class="table-wrap"><table><thead><tr>${cols.map(c=>`<th>${esc(c.label)}</th>`).join('')}</tr></thead>
-            <tbody>${periodRows.map(r=>`<tr>${cols.map(c=>`<td>${fieldDisplay(c, r[c.key], {}, r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`
+            <tbody>${logShown.map(r=>`<tr>${cols.map(c=>`<td>${fieldDisplay(c, r[c.key], {}, r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>${periodRows.length>logShown.length ? `<div style="text-align:center;padding:12px;"><button class="btn-secondary" id="analytics-log-more" style="width:auto;padding:9px 20px;">عرض المزيد (${logShown.length} من ${periodRows.length})</button></div>` : ''}`
           : `<div class="empty-state" style="padding:20px;"><div class="big">📭</div>لا توجد سجلات في هذه الفترة</div>`}
           </div>
         </div>`;
@@ -2266,6 +2271,11 @@
           state.analyticsPeriod.mode = b.dataset.period;
           render();
         }));
+        const logMoreBtn = document.getElementById('analytics-log-more');
+        if(logMoreBtn) logMoreBtn.addEventListener('click', ()=>{
+          state.analyticsLogLimit = (state.analyticsLogLimit||200) + 200;
+          render();
+        });
         const logToggleBtn = document.getElementById('daily-log-toggle-btn');
         if(logToggleBtn) logToggleBtn.addEventListener('click', ()=>{
           state.analyticsLogOpen = !state.analyticsLogOpen;
