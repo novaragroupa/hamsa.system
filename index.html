@@ -432,7 +432,7 @@
         {key:'registrationDate', label:'تاريخ التسجيل', type:'date', required:true},
         {key:'type', label:'النوع', type:'select', options:['مهتم','مندوب']},
         {key:'repStatus', label:'حالة المندوب', type:'select', options:['فعال','غير فعال']},
-        {key:'company', label:'الشركة', type:'dynamicSelect', ref:'companies', refField:'name'},
+        {key:'company', label:'الشركة', type:'dynamicSelect', ref:'visits', refField:'companyName'},
         {key:'status', label:'الحالة', type:'select', options:['جديد','تم التواصل','تحويل لحجز','مشترك']},
         {key:'sourceType', label:'جاي عن طريق', type:'select',
           options:['مندوب','علاقات عامة','ريسبشن','ميديا']},
@@ -569,7 +569,7 @@
     teams: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out'],
     employees: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','callcenter','accommodation','system','analyst'],
     companies: ['admin','pr_out','pr_in','analyst'],
-    visits: ['admin','pr_out','analyst'],
+    visits: ['admin','pr_out','analyst','pr_in','pr_manager','pr_leader','pr_member'],
     indoor_leads: ['admin','pr_manager','pr_leader','pr_member','pr_in','analyst'],
     indoor_data: ['admin','pr_manager','pr_leader','pr_member','pr_in','analyst'],
     callcenter_feedback: ['admin','callcenter','analyst'],
@@ -3800,7 +3800,9 @@
           const myTeam = emp?.team || '';
           refList = myTeam ? refList.filter(r=>r.team===myTeam) : refList.filter(r=>r.name===(emp?.name||state.user.name));
         }
-        refOptions[f.key] = refList.map(r=>r[f.refField]);
+        // dedupe: لو المرجع فيه أكتر من صف بنفس القيمة (زي جدول الزيارات اللي
+        // كل زيارة سجل لوحده)، منعرضش نفس القيمة أكتر من مرة في القائمة.
+        refOptions[f.key] = [...new Set(refList.map(r=>r[f.refField]).filter(Boolean))];
       } else if(f.type==='linkSelect'){
         const parentVal = f.parentKey ? (row? (row[f.parentKey]||'') : '') : null;
         refOptions[f.key] = await linkSelectOptionsFor(key, f, parentVal);
