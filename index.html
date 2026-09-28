@@ -436,6 +436,9 @@
         {key:'repStatus', label:'حالة المندوب', type:'select', options:['فعال','غير فعال']},
         {key:'company', label:'الشركة', type:'dynamicSelect', ref:'visits', refField:'companyName'},
         {key:'status', label:'الحالة', type:'select', options:['جديد','تم التواصل','تحويل لحجز','مشترك']},
+        {key:'receiptNumber', label:'رقم الإيصال', type:'text', showWhenSubscribed:true},
+        {key:'receiptBranch', label:'الفرع المسدد فيه', type:'text', showWhenSubscribed:true},
+        {key:'receiptDate', label:'تاريخ الإيصال', type:'date', showWhenSubscribed:true},
         {key:'sourceType', label:'وصل عن طريق', type:'select',
           options:['مندوب','علاقات عامة','الاستقبال','الإعلام']},
         {key:'responsiblePerson', label:'اسم المسؤول عنه', type:'dynamicSelect', ref:'employees', refField:'name'},
@@ -502,6 +505,9 @@
         {key:'groupName', label:'اسم المجموعة', type:'text'},
         {key:'responsiblePerson', label:'المسؤول', type:'dynamicSelect', ref:'employees', refField:'name'},
         {key:'subscriptionDate', label:'تاريخ الاشتراك', type:'date', required:true},
+        {key:'receiptNumber', label:'رقم الإيصال', type:'text'},
+        {key:'receiptBranch', label:'الفرع المسدد فيه', type:'text'},
+        {key:'receiptDate', label:'تاريخ الإيصال', type:'date'},
         {key:'packageType', label:'نوع الباقة', type:'select',
           options:['','عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان','حج قرعة تيسير','حج قرعة عادي','حج سياحي']},
         {key:'installmentMonths', label:'عدد شهور التقسيط', type:'number'},
@@ -1280,8 +1286,17 @@
   async function maybeCreateSubscriptionFromLead(lead){
     if(lead.type!=='مهتم' || lead.status!=='مشترك') return;
     const subs=await getData('subscriptions');
-    if(subs.some(s=>String(s.leadId||'')===String(lead.id))) return;
+    const receiptPart={receiptNumber:lead.receiptNumber||'', receiptBranch:lead.receiptBranch||'',
+      receiptDate:lead.receiptDate||''};
+    const existingSub = subs.find(s=>String(s.leadId||'')===String(lead.id));
+    if(existingSub){
+      // بنكتب بس لو بيانات الإيصال اتغيّرت فعلًا (تقليل الكتابة على الشيت).
+      if(Object.keys(receiptPart).some(k=>String(existingSub[k]||'')!==String(receiptPart[k]||'')))
+        await apiUpdate('subscriptions',{...existingSub,...receiptPart});
+      return;
+    }
     const sub={
+      ...receiptPart,
       id:uid(), leadId:lead.id, customerName:lead.name||'', nationalId:lead.nationalId||'', phone:lead.phone||'',
       gender:'', governorate:'', groupName:'',
       responsiblePerson:lead.responsiblePerson||'', subscriptionDate:todayISO(),
@@ -3299,27 +3314,38 @@
 
     if(key==='subscriptions'){
       const leads = await getData('indoor_leads');
-      const leadsN = leads.map(l=>({l, phone:String(l.phone||'').replace(/\D/g,''), name:String(l.name||'').trim()}));
+      const digits = v=>String(v||'').replace(/\D/g,'');
+      const byLast10 = new Map(), byName = new Map(), shortPhone = [], longPhone = [];
+      leads.forEach((l,i)=>{
+        const ph = digits(l.phone), nm = String(l.name||'').trim();
+        const x = {l, i, phone:ph};
+        if(ph){
+          if(ph.length>=10){ const k=ph.slice(-10); if(!byLast10.has(k)) byLast10.set(k,x); longPhone.push(x); }
+          else shortPhone.push(x);
+        }
+        if(nm && !byName.has(nm)) byName.set(nm,x);
+      });
+      const findLead = (rowPhone,rowName)=>{
+        let best=null;
+        const take = x=>{ if(x && (!best || x.i<best.i)) best=x; };
+        if(rowPhone){
+          // رقم قصير (أقل من 10 أرقام): مفيش فهرس ينفع، فبنمسح كل الأرقام (نادر).
+          const scan = rowPhone.length>=10 ? shortPhone : shortPhone.concat(longPhone);
+          if(rowPhone.length>=10) take(byLast10.get(rowPhone.slice(-10)));
+          for(const x of scan){
+            if(rowPhone===x.phone || rowPhone.endsWith(x.phone) || x.phone.endsWith(rowPhone.slice(-10))) take(x);
+          }
+        }
+        if(rowName) take(byName.get(rowName));
+        return best && best.l;
+      };
       data = data.map(row=>{
         if(row.leadId) return row;
-
-        const rowPhone = String(row.phone||'').replace(/\D/g,'');
+        const rowPhone = digits(row.phone);
         const rowName = String(row.customerName||'').trim();
         if(!rowPhone && !rowName) return row;
-
-        const hit = leadsN.find(x=>{
-          const phoneMatch = rowPhone && x.phone && (
-            rowPhone===x.phone ||
-            rowPhone.endsWith(x.phone.slice(-10)) ||
-            x.phone.endsWith(rowPhone.slice(-10))
-          );
-          const nameMatch = rowName && x.name && rowName===x.name;
-          return phoneMatch || nameMatch;
-        });
-        const lead = hit && hit.l;
-
+        const lead = findLead(rowPhone,rowName);
         if(!lead) return row;
-
         return {
           ...row,
           leadId: lead.id || '',
@@ -3612,7 +3638,7 @@
         + (last.date? ` <span style="font-size:11.5px;color:var(--muted);" dir="ltr">آخرها ${esc(fmtDate(last.date))}</span>` : '');
     }
     if(f.type==='image'){
-      return val? `<img class="row-photo" src="${val}"/>` : `<div class="row-photo"></div>`;
+      return val? `<img class="row-photo" loading="lazy" decoding="async" src="${val}"/>` : `<div class="row-photo"></div>`;
     }
     if(f.type==='linkSelect'){
       if(!val) return '';
@@ -3954,6 +3980,19 @@
     modalBg.addEventListener('click', e=>{ if(e.target===modalBg) modalBg.remove(); });
 
     const imgInput = modalBg.querySelector('input[type=file]');
+
+    /* ====== إيصال الاشتراك (يظهر ويبقى إجباري لما مهتم → مشترك) ====== */
+    const receiptGroups = [...modalBg.querySelectorAll('[data-receipt-group]')];
+    {
+      const statusSel = modalBg.querySelector('[name="status"]');
+      const typeSel = modalBg.querySelector('[name="type"]');
+      const toggleReceipt = ()=>{
+        const on = (!typeSel || typeSel.value==='مهتم') && statusSel && statusSel.value==='مشترك';
+        receiptGroups.forEach(g=>{ g.style.display = on ? '' : 'none'; });
+      };
+      if(statusSel) statusSel.addEventListener('change', toggleReceipt);
+      if(typeSel) typeSel.addEventListener('change', toggleReceipt);
+    }
     if(imgInput){
       imgInput.addEventListener('change', ()=>{
         const file = imgInput.files[0]; if(!file) return;
@@ -3999,6 +4038,13 @@
           if(el) newRow[f.key] = el.value;
         }
         Object.keys(forcedValues).forEach(k=>{ newRow[k] = forcedValues[k]; });
+
+        // تحويل مهتم → مشترك: بيانات الإيصال (الرقم والفرع والتاريخ) إجبارية.
+        if(key==='indoor_leads' && newRow.type==='مهتم' && newRow.status==='مشترك'){
+          if(!String(newRow.receiptNumber||'').trim()) throw new Error('رقم الإيصال مطلوب عند تحويل المهتم إلى مشترك');
+          if(!String(newRow.receiptBranch||'').trim()) throw new Error('الفرع المسدد فيه مطلوب عند تحويل المهتم إلى مشترك');
+          if(!newRow.receiptDate) throw new Error('تاريخ الإيصال مطلوب عند تحويل المهتم إلى مشترك');
+        }
 
         // تاريخ الاشتراك / التسجيل بيتحط تلقائيًا بتاريخ اليوم وقت الإضافة بس،
         // وعند التعديل بيفضل زي ما هو (الحقل مش ظاهر في الفورم أصلاً).
@@ -4117,7 +4163,13 @@
 
       inner = `<input type="${f.type}" name="${f.key}" value="${esc(val)}" ${f.required?'required':''}/>`;
     }
-    return `<div class="field ${full}"><label>${esc(f.label)}</label>${inner}</div>`;
+    let extra = '';
+    if(f.showWhenSubscribed){
+      const on = row && row.type==='مهتم' && row.status==='مشترك';
+      extra = ` data-receipt-group="1" style="${on?'':'display:none;'}"`;
+    }
+    const star = f.showWhenSubscribed ? ' <span class="receipt-star" style="color:#c0392b;">*</span>' : '';
+    return `<div class="field ${full}"${extra}><label>${esc(f.label)}${star}</label>${inner}</div>`;
   }
 
   (function initAuth(){
