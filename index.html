@@ -3837,12 +3837,31 @@
       item = item || {subscriptionStatus:'نشط', travelStatus:'لم يسافر'};
       const fieldsHtml = LINK_OWN_KEYS.map(k=>mod.fields.find(f=>f.key===k)).filter(Boolean)
         .map(f=>renderField(f, item, {}).replace(/ name="/g,' data-k="')).join('');
+
+      // الرحلة / الفندق / الغرفة الخاصة بالشخص المرتبط (مستقلة عن الاشتراك الأساسي)
+      const trips = cache.trips||[];
+      const hotelsOpts = subsHotelsForTrip(item.tripId);
+      const roomsOpts = subsRoomsForHotel(item.hotelId);
+      const accomHtml = `
+        <div class="field"><label>الرحلة (التسكين)</label>
+          <select data-k="tripId" class="linked-trip"><option value="">— بدون —</option>
+            ${trips.map(t=>`<option value="${esc(t.id)}" ${String(t.id)===String(item.tripId||'')?'selected':''}>${esc(linkLabel('trips',t))}</option>`).join('')}
+          </select></div>
+        <div class="field"><label>الفندق</label>
+          <select data-k="hotelId" class="linked-hotel"><option value="">— بدون —</option>
+            ${linkOptionsHtml(hotelsOpts, item.hotelId)}
+          </select></div>
+        <div class="field"><label>الغرفة</label>
+          <select data-k="roomId" class="linked-room" ${!item.hotelId?'disabled':''}><option value="">— بدون —</option>
+            ${roomsOpts.map(r=>`<option value="${esc(r.id)}" ${String(r.id)===String(item.roomId||'')?'selected':''}>${esc(linkLabel('accom_rooms',r))}</option>`).join('')}
+          </select></div>`;
+
       return `<div class="linked-block" data-id="${esc(item.id||'')}" style="border:1.5px dashed var(--gold-500);border-radius:12px;padding:14px;margin-top:12px;background:var(--sand-50);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <b>👤 شخص مرتبط</b>
           <button type="button" class="icon-btn del linked-remove">🗑️ حذف</button>
         </div>
-        <div class="form-grid">${fieldsHtml}</div>
+        <div class="form-grid">${fieldsHtml}${accomHtml}</div>
       </div>`;
     };
 
@@ -3852,7 +3871,7 @@
         : [];
       modalBg.querySelector('.form-grid').insertAdjacentHTML('afterend', `
         <div class="linked-section" style="margin-top:18px;">
-          <div class="assumption-note" style="margin-bottom:8px;">الأشخاص المرتبطون يشتركون في: المسؤول، حالة القرعة، اسم المجموعة. أول واحد يفوز يفوز كل المرتبطين ويظهرون في "الفائزون".</div>
+          <div class="assumption-note" style="margin-bottom:8px;">الأشخاص المرتبطون يشتركون في: المسؤول، حالة القرعة، اسم المجموعة. أول واحد يفوز يفوز كل المرتبطين ويظهرون في "الفائزون". أما الرحلة والفندق والغرفة فلكل شخص اختياره المستقل.</div>
           <div class="linked-list">${existingLinked.map(linkedBlockHtml).join('')}</div>
           <button type="button" class="icon-btn linked-add-btn" style="background:var(--sand-100);margin-top:10px;">➕ إضافة ربط</button>
         </div>`);
@@ -3868,6 +3887,26 @@
         const block = rm.closest('.linked-block');
         if(block.dataset.id) removedLinkedIds.push(block.dataset.id);
         block.remove();
+      });
+      // الرحلة -> الفندق -> الغرفة لكل شخص مرتبط على حدة
+      linkedList.addEventListener('change', e=>{
+        const block = e.target.closest('.linked-block');
+        if(!block) return;
+        if(e.target.classList.contains('linked-trip')){
+          const hs = block.querySelector('.linked-hotel');
+          const hl = subsHotelsForTrip(e.target.value);
+          const keepH = hl.some(o=>String(o.id)===String(hs.value)) ? hs.value : '';
+          hs.innerHTML = '<option value="">— بدون —</option>' + linkOptionsHtml(hl, keepH);
+          hs.dispatchEvent(new Event('change',{bubbles:true}));
+        }
+        if(e.target.classList.contains('linked-hotel')){
+          const rs = block.querySelector('.linked-room');
+          const rl = subsRoomsForHotel(e.target.value);
+          const keepR = rl.some(r=>String(r.id)===String(rs.value)) ? rs.value : '';
+          rs.innerHTML = '<option value="">— بدون —</option>' +
+            rl.map(r=>`<option value="${esc(r.id)}" ${String(r.id)===String(keepR)?'selected':''}>${esc(linkLabel('accom_rooms',r))}</option>`).join('');
+          rs.disabled = !e.target.value;
+        }
       });
     }
     /* ====== نهاية إضافة ربط ====== */
@@ -4019,7 +4058,7 @@
             rec.linkGroupId = newRow.linkGroupId;
             if(!rec.customerName) throw new Error('اسم الشخص المرتبط مطلوب');
             if(existing){ await apiUpdate('subscriptions', rec); await syncSubscriptionGuest(rec); }
-            else await apiAdd('subscriptions', rec);
+            else { await apiAdd('subscriptions', rec); await syncSubscriptionGuest(rec); }
           }
         }
 
