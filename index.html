@@ -3825,6 +3825,53 @@
     </div>`;
     document.body.appendChild(modalBg);
 
+    /* ====== إضافة ربط (الاشتراكات فقط) ====== */
+    // الحقول المشتركة بين كل أفراد الربط (بتتنسخ من الاشتراك الأساسي)
+    const LINK_SHARED_KEYS = ['responsiblePerson','lotteryStatus','groupName'];
+    // الحقول اللي بتتسأل لكل شخص مرتبط
+    const LINK_OWN_KEYS = ['customerName','nationalId','phone','gender','governorate','packageType',
+      'installmentMonths','installmentAmount','downPayment','subscriptionStatus','travelStatus','notes'];
+    const removedLinkedIds = [];
+
+    const linkedBlockHtml = (item)=>{
+      item = item || {subscriptionStatus:'نشط', travelStatus:'لم يسافر'};
+      const fieldsHtml = LINK_OWN_KEYS.map(k=>mod.fields.find(f=>f.key===k)).filter(Boolean)
+        .map(f=>renderField(f, item, {}).replace(/ name="/g,' data-k="')).join('');
+      return `<div class="linked-block" data-id="${esc(item.id||'')}" style="border:1.5px dashed var(--gold-500);border-radius:12px;padding:14px;margin-top:12px;background:var(--sand-50);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <b>👤 شخص مرتبط</b>
+          <button type="button" class="icon-btn del linked-remove">🗑️ حذف</button>
+        </div>
+        <div class="form-grid">${fieldsHtml}</div>
+      </div>`;
+    };
+
+    if(key==='subscriptions'){
+      const existingLinked = (row && row.linkGroupId)
+        ? list.filter(r=>String(r.linkGroupId||'')===String(row.linkGroupId) && String(r.id)!==String(row.id))
+        : [];
+      modalBg.querySelector('.form-grid').insertAdjacentHTML('afterend', `
+        <div class="linked-section" style="margin-top:18px;">
+          <div class="assumption-note" style="margin-bottom:8px;">الأشخاص المرتبطون يشتركون في: المسؤول، حالة القرعة، اسم المجموعة. أول واحد يفوز يفوز كل المرتبطين ويظهرون في "الفائزون".</div>
+          <div class="linked-list">${existingLinked.map(linkedBlockHtml).join('')}</div>
+          <button type="button" class="icon-btn linked-add-btn" style="background:var(--sand-100);margin-top:10px;">➕ إضافة ربط</button>
+        </div>`);
+      const linkedList = modalBg.querySelector('.linked-list');
+      modalBg.querySelector('.linked-add-btn').addEventListener('click', ()=>{
+        const w = document.createElement('div');
+        w.innerHTML = linkedBlockHtml(null);
+        linkedList.appendChild(w.firstElementChild);
+      });
+      linkedList.addEventListener('click', e=>{
+        const rm = e.target.closest('.linked-remove');
+        if(!rm) return;
+        const block = rm.closest('.linked-block');
+        if(block.dataset.id) removedLinkedIds.push(block.dataset.id);
+        block.remove();
+      });
+    }
+    /* ====== نهاية إضافة ربط ====== */
+
     // تثبيت أي حقول متفروضة من العرض الحالي (زي النوع جوه بوابة المهتمين/
     // المندوبين) وتعطيلها عشان المستخدم مايقدرش يغيّرها بالغلط ويخرج السجل
     // من القسم اللي هو فاتحه.
@@ -3880,13 +3927,13 @@
 
     const followupsEditor = modalBg.querySelector('.followups-editor');
     if(followupsEditor){
-      const list = followupsEditor.querySelector('.followups-list');
+      const fList = followupsEditor.querySelector('.followups-list');
       followupsEditor.querySelector('.followups-add-btn').addEventListener('click', ()=>{
         const wrap = document.createElement('div');
         wrap.innerHTML = followupRowHtml(null);
-        list.appendChild(wrap.firstElementChild);
+        fList.appendChild(wrap.firstElementChild);
       });
-      list.addEventListener('click', e=>{
+      fList.addEventListener('click', e=>{
         const rmBtn = e.target.closest('.followup-remove');
         if(rmBtn) rmBtn.closest('.followup-row').remove();
       });
@@ -3936,9 +3983,46 @@
             throw new Error('لا يمكن ربط البيانات بعضو خارج فريقك');
         }
 
+        // مجموعة الربط: لو فيه أشخاص مرتبطين بيتحدد/بيتولّد linkGroupId،
+        // ولو اتحذفوا كلهم الاشتراك يرجع عادي.
+        const linkedBlocks = key==='subscriptions' ? [...modalBg.querySelectorAll('.linked-block')] : [];
+        if(key==='subscriptions'){
+          if(linkedBlocks.length){
+            if(!newRow.linkGroupId) newRow.linkGroupId = 'grp'+uid();
+          } else {
+            newRow.linkGroupId = '';
+          }
+        }
+
         if(isNew) await apiAdd(key, newRow); else await apiUpdate(key, newRow);
         if(key==='indoor_leads') await maybeCreateSubscriptionFromLead(newRow);
         if(key==='subscriptions') await syncSubscriptionGuest(newRow);
+
+        if(key==='subscriptions'){
+          // حذف اللي اتشالوا من الربط
+          if(removedLinkedIds.length){
+            const guests = await getData('accom_guests');
+            const gIds = guests.filter(g=>removedLinkedIds.includes(String(g.subscriptionId||''))).map(g=>g.id);
+            await apiDeleteMany('accom_guests', gIds);
+            await apiDeleteMany('subscriptions', removedLinkedIds);
+          }
+          // إضافة/تحديث المرتبطين بنفس الحقول المشتركة (المسؤول، حالة القرعة، اسم المجموعة)
+          const allSubs = await getData('subscriptions');
+          for(const block of linkedBlocks){
+            const existing = block.dataset.id ? allSubs.find(s=>String(s.id)===String(block.dataset.id)) : null;
+            const rec = existing ? {...existing} : {
+              id: uid(), leadId:'', tripId:'', hotelId:'', roomId:'',
+              subscriptionDate: todayISO()
+            };
+            block.querySelectorAll('[data-k]').forEach(el=>{ rec[el.dataset.k] = el.value; });
+            LINK_SHARED_KEYS.forEach(k=>{ rec[k] = newRow[k] || ''; });
+            rec.linkGroupId = newRow.linkGroupId;
+            if(!rec.customerName) throw new Error('اسم الشخص المرتبط مطلوب');
+            if(existing){ await apiUpdate('subscriptions', rec); await syncSubscriptionGuest(rec); }
+            else await apiAdd('subscriptions', rec);
+          }
+        }
+
         modalBg.remove();
         render();
       }catch(err){
