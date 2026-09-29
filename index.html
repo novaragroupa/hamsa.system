@@ -430,12 +430,13 @@
         {key:'name', label:'الاسم', type:'text', required:true},
         {key:'code', label:'كود العميل', type:'readonly'},
         {key:'phone', label:'رقم الهاتف', type:'text'},
-        {key:'nationalId', label:'الرقم القومي', type:'text'},
+        {key:'nationalId', label:'الرقم القومي', type:'text', starWhenSubscribed:true},
         {key:'registrationDate', label:'تاريخ التسجيل', type:'date', required:true},
         {key:'type', label:'النوع', type:'select', options:['مهتم','مندوب']},
         {key:'repStatus', label:'حالة المندوب', type:'select', options:['فعال','غير فعال']},
         {key:'company', label:'الشركة', type:'dynamicSelect', ref:'visits', refField:'companyName'},
         {key:'status', label:'الحالة', type:'select', options:['جديد','تم التواصل','تحويل لحجز','مشترك']},
+        {key:'gender', label:'جنس العميل', type:'select', options:['ذكر','أنثى'], showWhenSubscribed:true},
         {key:'omegaCode', label:'كود أوميجا', type:'text', showWhenSubscribed:true},
         {key:'paymentDate', label:'تاريخ الدفع', type:'date', showWhenSubscribed:true},
         {key:'packageType', label:'نوع الباقة', type:'select', showWhenSubscribed:true,
@@ -444,9 +445,9 @@
         {key:'installmentAmount', label:'قيمة القسط (اختياري)', type:'number', showWhenSubscribed:true, optionalWhenSubscribed:true},
         {key:'installmentMonths', label:'عدد شهور التقسيط (اختياري)', type:'number', showWhenSubscribed:true, optionalWhenSubscribed:true},
         {key:'downPayment', label:'المقدم (اختياري)', type:'number', showWhenSubscribed:true, optionalWhenSubscribed:true},
-        {key:'sourceType', label:'وصل عن طريق', type:'select',
+        {key:'sourceType', label:'وصل عن طريق', type:'select', starForInterested:true,
           options:['مندوب','علاقات عامة','الاستقبال','الإعلام']},
-        {key:'responsiblePerson', label:'اسم المسؤول عنه', type:'dynamicSelect', ref:'employees', refField:'name'},
+        {key:'responsiblePerson', label:'اسم المسؤول عنه', type:'dynamicSelect', ref:'employees', refField:'name', starForInterested:true},
         {key:'managerRep', label:' تحت إشراف مندوب', type:'dynamicSelect',
           ref:'indoor_leads', refField:'name', filter:{field:'type', value:'مندوب'}},
         {key:'notes', label:'ملاحظات', type:'textarea'},
@@ -1332,13 +1333,15 @@
       Object.keys(receiptPart).forEach(k=>{
         if(String(receiptPart[k]) !== '' && String(existingSub[k]||'')!==String(receiptPart[k])) changed[k]=receiptPart[k];
       });
+      if(!existingSub.gender && lead.gender) changed.gender = lead.gender;
+      if(!existingSub.nationalId && lead.nationalId) changed.nationalId = lead.nationalId;
       if(Object.keys(changed).length) await apiUpdate('subscriptions',{...existingSub,...changed});
       return;
     }
     const sub={
       ...receiptPart,
       id:uid(), leadId:lead.id, customerName:lead.name||'', nationalId:lead.nationalId||'', phone:lead.phone||'',
-      gender:'', governorate:'', groupName:'',
+      gender:lead.gender||'', governorate:'', groupName:'',
       responsiblePerson:lead.responsiblePerson||'', subscriptionDate:todayISO(),
       lotteryStatus:'لم يُحسم بعد', travelStatus:'لم يسافر',
       subscriptionStatus:'نشط', notes:lead.notes||''
@@ -3916,6 +3919,9 @@
       const toggleReceipt = ()=>{
         const on = (!typeSel || typeSel.value==='مهتم') && statusSel && statusSel.value==='مشترك';
         receiptGroups.forEach(g=>{ g.style.display = on ? '' : 'none'; });
+        modalBg.querySelectorAll('[data-star-subscribed]').forEach(st=>{ st.style.display = on ? '' : 'none'; });
+        const isInterested = !typeSel || typeSel.value==='مهتم' || typeSel.value==='';
+        modalBg.querySelectorAll('[data-star-interested]').forEach(st=>{ st.style.display = isInterested ? '' : 'none'; });
       };
       if(statusSel) statusSel.addEventListener('change', toggleReceipt);
       if(typeSel) typeSel.addEventListener('change', toggleReceipt);
@@ -4010,6 +4016,19 @@
           }
         }
 
+        // تسجيل مهتم: "وصل عن طريق" و"اسم المسؤول عنه" إجباريين.
+        if(key==='indoor_leads' && newRow.type==='مهتم'){
+          if(!String(newRow.sourceType||'').trim()) throw new Error('"وصل عن طريق" مطلوب عند تسجيل مهتم');
+          if(!String(newRow.responsiblePerson||'').trim()) throw new Error('اسم المسؤول عنه مطلوب عند تسجيل مهتم');
+        }
+        // تحويل مهتم → مشترك: الرقم القومي (14 رقم بالظبط) وجنس العميل إجباريين.
+        if(key==='indoor_leads' && newRow.type==='مهتم' && newRow.status==='مشترك'){
+          const nid = String(newRow.nationalId||'').trim();
+          if(!/^\d{14}$/.test(nid)) throw new Error('الرقم القومي مطلوب ويجب أن يكون 14 رقمًا بالضبط (أرقام فقط) عند تحويل المهتم إلى مشترك');
+          newRow.nationalId = nid;
+          if(!String(newRow.gender||'').trim()) throw new Error('جنس العميل مطلوب عند تحويل المهتم إلى مشترك');
+        }
+
         if(isNew) await apiAdd(key, newRow); else await apiUpdate(key, newRow);
         if(key==='indoor_leads') await maybeCreateSubscriptionFromLead(newRow);
         if(key==='subscriptions') await syncSubscriptionGuest(newRow);
@@ -4101,7 +4120,15 @@
       const on = row && row.type==='مهتم' && row.status==='مشترك';
       extra = ` data-receipt-group="1" style="${on?'':'display:none;'}"`;
     }
-    const star = (f.showWhenSubscribed && !f.optionalWhenSubscribed) ? ' <span class="receipt-star" style="color:#c0392b;">*</span>' : '';
+    let star = (f.showWhenSubscribed && !f.optionalWhenSubscribed) ? ' <span class="receipt-star" style="color:#c0392b;">*</span>' : '';
+    if(f.starWhenSubscribed){
+      const onS = row && row.type==='مهتم' && row.status==='مشترك';
+      star = ` <span data-star-subscribed="1" style="color:#c0392b;${onS?'':'display:none;'}">*</span>`;
+    }
+    if(f.starForInterested){
+      const onI = !row || !row.type || row.type==='مهتم';
+      star = ` <span data-star-interested="1" style="color:#c0392b;${onI?'':'display:none;'}">*</span>`;
+    }
     return `<div class="field ${full}"${extra}><label>${esc(f.label)}${star}</label>${inner}</div>`;
   }
 
