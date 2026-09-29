@@ -2165,6 +2165,8 @@
 
   async function renderAnalytics(page, mods){
     const accessibleKeys = new Set(mods.map(([k])=>k));
+    // التسكين: عرض فقط — يشوف اللوحات اللي ينشئها المدير ومايقدرش يضيف/يعدّل/يحذف.
+    const readOnly = state.user.role==='accommodation';
     await getDataMany(['dashboards','widgets','employees']);
     const allBoards = await getData('dashboards');
     const myBoards = allBoards.filter(b=> accessibleKeys.has(b.sourceModule));
@@ -2176,7 +2178,7 @@
 
     let bodyHtml, mod, widgets, dateField;
     if(!board){
-      bodyHtml = `<div class="card"><div class="empty-state"><div class="big">📊</div>لا توجد لوحات تحليل بعد — اضغط "+ لوحة جديدة" لبدء بناء التحليلات الخاصة بقسمك</div></div>`;
+      bodyHtml = `<div class="card"><div class="empty-state"><div class="big">📊</div>${readOnly ? 'لا توجد لوحات تحليل متاحة حاليًا — ستظهر هنا اللوحات التي ينشئها المدير' : 'لا توجد لوحات تحليل بعد — اضغط "+ لوحة جديدة" لبدء بناء التحليلات الخاصة بقسمك'}</div></div>`;
     } else {
       mod = MODULES[board.sourceModule];
       dateField = moduleDateField(mod);
@@ -2279,7 +2281,7 @@
         const entries = groupAndAggregate(widgetData, w.groupBy, w.metric, w.metricField, teamMap);
         return `<div class="widget-card">
           <div class="widget-head"><h4>${esc(w.title)}</h4>
-            <div><button class="icon-btn" data-editw="${w.id}">✏️</button><button class="icon-btn del" data-delw="${w.id}">🗑️</button></div>
+            ${readOnly ? '' : `<div><button class="icon-btn" data-editw="${w.id}">✏️</button><button class="icon-btn del" data-delw="${w.id}">🗑️</button></div>`}
           </div>
           ${renderWidgetBody(w.chartType, entries)}
         </div>`;
@@ -2290,14 +2292,14 @@
           <div class="analytics-filterbar">${filtersHtml || '<span style="color:var(--muted);font-size:13px;">لا توجد خيارات تصفية لهذا المصدر</span>'}</div>
           <div style="display:flex;gap:8px;">
             ${filterFields.length? `<button class="btn-secondary" id="clear-filters" style="width:auto;padding:9px 16px;">✖ مسح التصفية</button>`:''}
-            <button class="icon-btn del" id="del-board-btn">🗑️ حذف اللوحة</button>
+            ${readOnly ? '' : `<button class="icon-btn del" id="del-board-btn">🗑️ حذف اللوحة</button>`}
           </div>
         </div>
         ${dailyLogHtml}
         ${dateField? `<div class="assumption-note" style="margin-bottom:14px;">تتحكم الفترة المختارة أعلاه (يوم / إجمالي الشهر / إجمالي السنة) في عناصر التحليل الموجودة أدناه أيضًا.</div>` : ''}
         <div class="widgets-grid">
           ${widgetCards}
-          <button class="widget-card add-widget-card" id="add-widget-btn">➕<br/>إضافة عنصر تحليل</button>
+          ${readOnly ? '' : `<button class="widget-card add-widget-card" id="add-widget-btn">➕<br/>إضافة عنصر تحليل</button>`}
         </div>`;
     }
 
@@ -2306,12 +2308,13 @@
     page.innerHTML = `
       <div class="page-head">
         <h2>📊 تحليل البيانات</h2>
-        <button class="btn-primary btn-gold" id="new-board-btn" style="width:auto;padding:10px 20px;">+ لوحة جديدة</button>
+        ${readOnly ? '' : `<button class="btn-primary btn-gold" id="new-board-btn" style="width:auto;padding:10px 20px;">+ لوحة جديدة</button>`}
       </div>
       ${myBoards.length? `<div class="board-tabs">${boardTabs}</div>` : ''}
       ${bodyHtml}`;
 
-    document.getElementById('new-board-btn').addEventListener('click', ()=>openBoardForm(mods));
+    const newBoardBtn = document.getElementById('new-board-btn');
+    if(newBoardBtn) newBoardBtn.addEventListener('click', ()=>openBoardForm(mods));
     page.querySelectorAll('[data-board]').forEach(b=>b.addEventListener('click', ()=>{
       state.analyticsBoard=b.dataset.board; state.analyticsFilters={}; render();
     }));
@@ -2353,7 +2356,8 @@
           render();
         });
       }
-      document.getElementById('del-board-btn').addEventListener('click', async ()=>{
+      const delBoardBtn = document.getElementById('del-board-btn');
+      if(delBoardBtn) delBoardBtn.addEventListener('click', async ()=>{
         if(!confirm('حذف اللوحة وكل عناصر التحليل بداخلها؟')) return;
         const ws = (await getData('widgets')).filter(w=>w.dashboardId===board.id);
         await apiDeleteMany('widgets', ws.map(w=>w.id));
@@ -2361,7 +2365,8 @@
         state.analyticsBoard = null;
         render();
       });
-      document.getElementById('add-widget-btn').addEventListener('click', ()=>openWidgetForm(board, mod, null));
+      const addWidgetBtn = document.getElementById('add-widget-btn');
+      if(addWidgetBtn) addWidgetBtn.addEventListener('click', ()=>openWidgetForm(board, mod, null));
       page.querySelectorAll('[data-editw]').forEach(b=>b.addEventListener('click', ()=>{
         const w = widgets.find(x=>x.id===b.dataset.editw);
         openWidgetForm(board, mod, w);
