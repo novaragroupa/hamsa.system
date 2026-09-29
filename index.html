@@ -519,8 +519,10 @@
         {key:'installmentAmount', label:'قيمة القسط', type:'number'},
         {key:'downPayment', label:'المقدم', type:'number'},
         {key:'tripId', label:'الرحلة (التسكين)', type:'linkSelect', ref:'trips'},
-        {key:'hotelId', label:'الفندق', type:'linkSelect', ref:'accom_hotels', parentKey:'tripId'},
-        {key:'roomId', label:'الغرفة', type:'linkSelect', ref:'accom_rooms', parentKey:'hotelId'},
+        {key:'makkahHotelId', label:'فندق مكة', type:'linkSelect', ref:'accom_hotels', city:'مكة'},
+        {key:'makkahRoomId', label:'غرفة مكة', type:'linkSelect', ref:'accom_rooms', parentKey:'makkahHotelId', parentField:'hotelId'},
+        {key:'madinaHotelId', label:'فندق المدينة', type:'linkSelect', ref:'accom_hotels', city:'المدينة'},
+        {key:'madinaRoomId', label:'غرفة المدينة', type:'linkSelect', ref:'accom_rooms', parentKey:'madinaHotelId', parentField:'hotelId'},
         {key:'lotteryStatus', label:'حالة القرعة', type:'select', options:['لم يُحسم بعد','فائز','لم يفز']},
         {key:'travelStatus', label:'حالة السفر', type:'select', options:['لم يسافر','سافر']},
         {key:'subscriptionStatus', label:'حالة الاشتراك', type:'select', options:['نشط','مكتمل','ملغي']},
@@ -1164,15 +1166,49 @@
     return {ok:true, release:()=>{ btn.disabled=false; btn.textContent=origText; }};
   }
 
-  async function linkSelectOptionsFor(moduleKey, f, parentVal){
-    if(moduleKey==='subscriptions' && f.key==='hotelId' && f.ref==='accom_hotels' && f.parentKey==='tripId'){
-      // مفيش ربط بين الرحلة والفندق: أي فندق متاح لأي رحلة.
-      const hotels = await getData('accom_hotels');
-      return hotels.map(h=>({id:h.id, label: linkLabel('accom_hotels', h)}));
+  /* ---------------- مدينة الفندق: مكة / المدينة ---------------- */
+  const HOTEL_CITIES = ['مكة','المدينة'];
+  // مدينة الفندق: الحقل city لو موجود، وإلا بنستنتجها من نص "مكان الفندق" للفنادق القديمة.
+  function hotelCity(h){
+    if(!h) return '';
+    if(h.city) return h.city;
+    const loc = String(h.location||'');
+    if(/مك[هة]/.test(loc)) return 'مكة';
+    if(/المدين[هة]|مدين[هة]/.test(loc)) return 'المدينة';
+    return '';
+  }
+  // فنادق مدينة معيّنة. الفندق القديم اللي مدينته مش معروفة بيظهر في المدينتين لحد ما تتحدد.
+  function hotelsOfCity(city){
+    return (cache.accom_hotels||[]).filter(h=>{ const c=hotelCity(h); return !c || c===city; });
+  }
+  const SUB_ACCOM = [
+    {city:'مكة',    hotelKey:'makkahHotelId', roomKey:'makkahRoomId'},
+    {city:'المدينة', hotelKey:'madinaHotelId', roomKey:'madinaRoomId'},
+  ];
+  // بترجّع فندق/غرفة مكة والمدينة للاشتراك، وبتنقل بيانات hotelId/roomId القديمة للمدينة المناسبة.
+  function subAccom(row){
+    const out = {
+      makkahHotelId: row.makkahHotelId||'', makkahRoomId: row.makkahRoomId||'',
+      madinaHotelId: row.madinaHotelId||'', madinaRoomId: row.madinaRoomId||''
+    };
+    if(row.hotelId && !out.makkahHotelId && !out.madinaHotelId){
+      const h = (cache.accom_hotels||[]).find(x=>String(x.id)===String(row.hotelId));
+      const isMadina = hotelCity(h)==='المدينة';
+      out[isMadina?'madinaHotelId':'makkahHotelId'] = row.hotelId;
+      out[isMadina?'madinaRoomId':'makkahRoomId'] = row.roomId||'';
     }
+    return out;
+  }
+  function withSubAccom(row){ return {...row, ...subAccom(row)}; }
+
+  async function linkSelectOptionsFor(moduleKey, f, parentVal){
     const refList = await getData(f.ref);
+    if(f.ref==='accom_hotels' && f.city){
+      return hotelsOfCity(f.city).map(h=>({id:h.id, label: linkLabel('accom_hotels', h)}));
+    }
     if(!f.parentKey) return refList.map(r=>({id:r.id, label: linkLabel(f.ref, r)}));
-    const list = parentVal? refList.filter(r=> String(r[f.parentKey])===String(parentVal)) : [];
+    const pf = f.parentField || f.parentKey;
+    const list = parentVal? refList.filter(r=> String(r[pf])===String(parentVal)) : [];
     return list.map(r=>({id:r.id, label: linkLabel(f.ref, r)}));
   }
 
@@ -1318,30 +1354,46 @@
   // عشان أي استدعاء قديم ما يكسرش حاجة.
   async function ensureTripHotelLink(tripId, hotelId){ return; }
 
+  // كل اشتراك ممكن يبقى له نزيل في غرفة مكة ونزيل في غرفة المدينة (سجل لكل مدينة).
   async function syncSubscriptionGuest(sub){
-    await ensureTripHotelLink(sub.tripId, sub.hotelId);
-
+    const acc = subAccom(sub);
+    await getDataMany(['accom_guests','accom_rooms','accom_hotels']);
     const guests = await getData('accom_guests');
-    const existing = guests.find(g=>String(g.subscriptionId||'')===String(sub.id));
-
-    if(!sub.roomId){
-      if(existing) await apiDelete('accom_guests', existing.id);
-      return;
-    }
-
-    const rec = {
-      id: existing? existing.id : uid(),
-      subscriptionId: sub.id,
-      roomId: sub.roomId,
-      tripId: sub.tripId||'',
-      name: sub.customerName||'',
-      nationalId: sub.nationalId||'',
-      phone: sub.phone||'',
-      passportNumber: existing? (existing.passportNumber||'') : '',
-      flightStatus: existing? (existing.flightStatus||'لم يُحجز') : 'لم يُحجز',
-      notes: existing? (existing.notes||'') : ''
+    const rooms = cache.accom_rooms||[];
+    const mine = guests.filter(g=>String(g.subscriptionId||'')===String(sub.id));
+    // مدينة السجل: من الحقل city، وللسجلات القديمة من فندق الغرفة.
+    const cityOfGuest = g=>{
+      if(g.city) return g.city;
+      const rm = rooms.find(r=>String(r.id)===String(g.roomId));
+      const h = rm && (cache.accom_hotels||[]).find(x=>String(x.id)===String(rm.hotelId));
+      return hotelCity(h) || 'مكة';
     };
-    if(existing) await apiUpdate('accom_guests', rec); else await apiAdd('accom_guests', rec);
+    const used = new Set();
+    for(const slot of SUB_ACCOM){
+      const roomId = acc[slot.roomKey];
+      const existing = mine.find(g=>!used.has(g.id) && cityOfGuest(g)===slot.city);
+      if(existing) used.add(existing.id);
+      if(!roomId){
+        if(existing) await apiDelete('accom_guests', existing.id);
+        continue;
+      }
+      const rec = {
+        id: existing? existing.id : uid(),
+        subscriptionId: sub.id,
+        roomId,
+        city: slot.city,
+        tripId: sub.tripId||'',
+        name: sub.customerName||'',
+        nationalId: sub.nationalId||'',
+        phone: sub.phone||'',
+        passportNumber: existing? (existing.passportNumber||'') : '',
+        flightStatus: existing? (existing.flightStatus||'لم يُحجز') : 'لم يُحجز',
+        notes: existing? (existing.notes||'') : ''
+      };
+      if(existing) await apiUpdate('accom_guests', rec); else await apiAdd('accom_guests', rec);
+    }
+    // أي سجل نزيل زيادة للاشتراك ده (مكرر) بيتشال.
+    for(const g of mine){ if(!used.has(g.id)) await apiDelete('accom_guests', g.id); }
   }
 
   let renderRun = null, renderAgain = false, lastRenderedView = null;
@@ -2494,6 +2546,7 @@
           const fullRooms = roomsCnt - availRooms;
           return `<div class="area-chip click-card" data-hotel="${h.id}">
             <div class="cnt">🏨</div><div class="nm">${esc(h.name)}</div>
+            <div class="nm">${hotelCity(h)? `<span class="badge ${hotelCity(h)==='مكة'?'gold':'green'}">${esc(hotelCity(h))}</span>` : '<span class="badge gray">بدون مدينة</span>'}</div>
             <div class="nm" style="color:var(--muted);">${esc(h.location||'')}</div>
             <div class="trip-stats">
               <div class="trip-stat"><b>${roomsCnt}</b><span>عدد الغرف</span></div>
@@ -2536,7 +2589,11 @@
       modalBg.innerHTML = `<div class="modal"><h3>${id?'تعديل فندق':'إضافة فندق'}</h3>
         <form id="hotel-standalone-form"><div class="form-grid">
           <div class="field full"><label>اسم الفندق</label><input name="name" required value="${esc(row?.name||'')}"/></div>
-          <div class="field full"><label>مكان الفندق</label><input name="location" placeholder="مثال: مكة - العزيزية" value="${esc(row?.location||'')}"/></div>
+          <div class="field full"><label>المدينة</label>
+            <select name="city" required><option value="">اختر المدينة...</option>
+              ${HOTEL_CITIES.map(c=>`<option value="${esc(c)}" ${hotelCity(row)===c?'selected':''}>${esc(c)}</option>`).join('')}
+            </select></div>
+          <div class="field full"><label>مكان الفندق</label><input name="location" placeholder="مثال: العزيزية" value="${esc(row?.location||'')}"/></div>
           <div class="field full"><label>ملاحظات</label><textarea name="notes" rows="2">${esc(row?.notes||'')}</textarea></div>
         </div>
         <div class="modal-actions"><button type="button" class="btn-secondary" id="cancel-btn">إلغاء</button>
@@ -2549,7 +2606,7 @@
         const guard = submitGuard(e.target); if(!guard.ok) return;
         try{
           const fd = new FormData(e.target);
-          const rec = {id: id||uid(), name:fd.get('name'), location:fd.get('location'), notes:fd.get('notes')};
+          const rec = {id: id||uid(), name:fd.get('name'), city:fd.get('city'), location:fd.get('location'), notes:fd.get('notes')};
           if(id) await apiUpdate('accom_hotels', rec); else await apiAdd('accom_hotels', rec);
           modalBg.remove(); render();
         }catch(err){ console.error(err); alert('تعذر الحفظ'); guard.release(); }
@@ -2792,10 +2849,13 @@
       </div>
       <div class="card">
         ${subs.length? `<div class="table-wrap"><table>
-          <thead><tr><th>#</th><th>العميل</th><th>الهاتف</th><th>الرقم القومي</th><th>الجنس</th><th>المحافظة</th><th>المجموعة</th><th>نوع الباقة</th><th>حالة القرعة</th><th>الفندق</th><th>الغرفة</th><th>حالة السفر</th><th>حالة الاشتراك</th></tr></thead>
-          <tbody>${subs.map((r,i)=>{
-            const h = hotels.find(x=>String(x.id)===String(r.hotelId||''));
-            const rm = rooms.find(x=>String(x.id)===String(r.roomId||''));
+          <thead><tr><th>#</th><th>العميل</th><th>الهاتف</th><th>الرقم القومي</th><th>الجنس</th><th>المحافظة</th><th>المجموعة</th><th>نوع الباقة</th><th>حالة القرعة</th><th>فندق مكة</th><th>غرفة مكة</th><th>فندق المدينة</th><th>غرفة المدينة</th><th>حالة السفر</th><th>حالة الاشتراك</th></tr></thead>
+          <tbody>${subs.map((r0,i)=>{
+            const r = withSubAccom(r0);
+            const hk = hotels.find(x=>String(x.id)===String(r.makkahHotelId||''));
+            const rk = rooms.find(x=>String(x.id)===String(r.makkahRoomId||''));
+            const hd = hotels.find(x=>String(x.id)===String(r.madinaHotelId||''));
+            const rd = rooms.find(x=>String(x.id)===String(r.madinaRoomId||''));
             return `<tr>
               <td>${i+1}</td>
               <td>${esc(r.customerName||'—')}</td>
@@ -2806,8 +2866,10 @@
               <td>${esc(r.groupName||'—')}</td>
               <td>${esc(r.packageType||'—')}</td>
               <td>${badge(lotteryBadge, r.lotteryStatus)}</td>
-              <td>${h? esc(h.name) : '<span style="color:var(--muted);">لم يُسكَّن</span>'}</td>
-              <td>${rm? esc(rm.roomNumber||'') : '—'}</td>
+              <td>${hk? esc(hk.name) : '<span style="color:var(--muted);">لم يُسكَّن</span>'}</td>
+              <td>${rk? esc(rk.roomNumber||'') : '—'}</td>
+              <td>${hd? esc(hd.name) : '<span style="color:var(--muted);">لم يُسكَّن</span>'}</td>
+              <td>${rd? esc(rd.roomNumber||'') : '—'}</td>
               <td>${badge(travelBadge, r.travelStatus)}</td>
               <td>${badge(statusBadge, r.subscriptionStatus)}</td>
             </tr>`;
@@ -2885,7 +2947,7 @@
     if(!MODULES.winners.roles.includes(state.user.role)) return;
     await getDataMany(['subscriptions','trips','accom_hotels','accom_rooms']);
     let data = await filterPRData('subscriptions', await getData('subscriptions'));
-    data = data.filter(r=>String(r.lotteryStatus||'')==='فائز' && r.subscriptionStatus!=='ملغي');
+    data = data.filter(r=>String(r.lotteryStatus||'')==='فائز' && r.subscriptionStatus!=='ملغي').map(withSubAccom);
 
     const trips=cache['trips']||[], hotels=cache['accom_hotels']||[], rooms=cache['accom_rooms']||[];
     const tripMap=Object.fromEntries(trips.map(r=>[r.id,linkLabel('trips',r)]));
@@ -2909,20 +2971,20 @@
     const searchTerm=state.moduleSearch.winners||'';
     // بنحسب نص البحث لكل صف مرة واحدة بس (مش مع كل حرف يتكتب)، عشان تفادي
     // إعادة حساب join/toLowerCase على كل الصفوف مع كل ضغطة زر أثناء الكتابة.
-    const searchIndex=columnFilteredData.map(r=>({row:r, text:[r.customerName,r.packageType,r.phone,r.nationalId,r.gender,r.governorate,r.travelStatus,tripMap[r.tripId],hotelMap[r.hotelId],roomMap[r.roomId]].join(' ').toLowerCase()}));
+    const searchIndex=columnFilteredData.map(r=>({row:r, text:[r.customerName,r.packageType,r.phone,r.nationalId,r.gender,r.governorate,r.travelStatus,tripMap[r.tripId],hotelMap[r.makkahHotelId],roomMap[r.makkahRoomId],hotelMap[r.madinaHotelId],roomMap[r.madinaRoomId]].join(' ').toLowerCase()}));
     const getRows=term=>{
       term=String(term||'').trim().toLowerCase();
       return term? searchIndex.filter(x=>x.text.includes(term)).map(x=>x.row) : columnFilteredData;
     };
     const tableHtml=rows=>!rows.length
       ? `<div class="empty-state"><div class="big">${data.length?'🔍':'🏆'}</div>${data.length?'لا توجد نتائج مطابقة للبحث أو التصفية':'لا يوجد فائزون حتى الآن'}</div>`
-      : `<div class="table-wrap"><table><thead><tr><th>العميل</th><th>نوع الاشتراك</th><th>الهاتف</th><th>الرقم القومي</th><th>الجنس</th><th>المحافظة</th><th>حالة القرعة</th><th>الرحلة</th><th>الفندق</th><th>الغرفة</th><th>حالة السفر</th><th></th></tr></thead><tbody>${rows.map(r=>`<tr>
+      : `<div class="table-wrap"><table><thead><tr><th>العميل</th><th>نوع الاشتراك</th><th>الهاتف</th><th>الرقم القومي</th><th>الجنس</th><th>المحافظة</th><th>حالة القرعة</th><th>الرحلة</th><th>فندق مكة</th><th>غرفة مكة</th><th>فندق المدينة</th><th>غرفة المدينة</th><th>حالة السفر</th><th></th></tr></thead><tbody>${rows.map(r=>`<tr>
         <td>${esc(r.customerName||'')}</td><td>${esc(r.packageType||'')}</td><td>${esc(r.phone||'')}</td><td>${esc(r.nationalId||'')}</td><td>${esc(r.gender||'')}</td><td>${esc(r.governorate||'')}</td>
         <td><span class="badge gold">فائز</span></td>
         <td>${canEditWinners
           ? `<select class="winner-trip-select" data-id="${esc(r.id)}" style="min-width:180px"><option value="">— بدون رحلة —</option>${trips.map(t=>`<option value="${esc(t.id)}" ${String(t.id)===String(r.tripId||'')?'selected':''}>${esc(linkLabel('trips',t))}</option>`).join('')}</select>`
           : esc(tripMap[r.tripId]||'—')}</td>
-        <td>${esc(hotelMap[r.hotelId]||'—')}</td><td>${esc(roomMap[r.roomId]||'—')}</td><td>${esc(r.travelStatus||'لم يسافر')}</td>
+        <td>${esc(hotelMap[r.makkahHotelId]||'—')}</td><td>${esc(roomMap[r.makkahRoomId]||'—')}</td><td>${esc(hotelMap[r.madinaHotelId]||'—')}</td><td>${esc(roomMap[r.madinaRoomId]||'—')}</td><td>${esc(r.travelStatus||'لم يسافر')}</td>
         <td>${canEditWinners ? `<button class="icon-btn" data-winner-edit="${esc(r.id)}">✏️</button>` : ''}</td>
       </tr>`).join('')}</tbody></table></div>`;
     const filterBarHtml = `<div class="analytics-filterbar" id="winners-filterbar" style="margin-top:10px;${Object.values(activeFilters).some(v=>v)?'':'display:none;'}">
@@ -3003,8 +3065,6 @@
     return (cache.accom_rooms||[]).filter(r=>r.hotelId===hotelId);
   }
   function renderAccommodationAssignRow(mod, row, linkMaps){
-    const hotels = subsHotelsForTrip(row.tripId);
-    const rooms = subsRoomsForHotel(row.hotelId);
     const trips = cache.trips||[];
     return `<tr>${mod.fields.map(f=>{
       if(f.key==='tripId'){
@@ -3013,16 +3073,18 @@
           ${trips.map(t=>`<option value="${esc(t.id)}" ${String(t.id)===String(row.tripId||'')?'selected':''}>${esc(linkLabel('trips',t))}</option>`).join('')}
         </select></td>`;
       }
-      if(f.key==='hotelId'){
-        return `<td><select class="assign-select assign-hotel" data-id="${esc(row.id)}">
+      if(f.type==='linkSelect' && f.ref==='accom_hotels' && f.city){
+        const hotels = hotelsOfCity(f.city).map(h=>({id:h.id, label: linkLabel('accom_hotels', h)}));
+        return `<td><select class="assign-select assign-hotel" data-field="${f.key}" data-id="${esc(row.id)}">
           <option value="">— بدون —</option>
-          ${linkOptionsHtml(hotels, row.hotelId)}
+          ${linkOptionsHtml(hotels, row[f.key])}
         </select></td>`;
       }
-      if(f.key==='roomId'){
-        return `<td><select class="assign-select assign-room" data-id="${esc(row.id)}" ${!row.hotelId?'disabled':''}>
+      if(f.type==='linkSelect' && f.ref==='accom_rooms' && f.parentKey){
+        const rooms = subsRoomsForHotel(row[f.parentKey]);
+        return `<td><select class="assign-select assign-room" data-field="${f.key}" data-id="${esc(row.id)}" ${!row[f.parentKey]?'disabled':''}>
           <option value="">— بدون —</option>
-          ${rooms.map(r=>`<option value="${esc(r.id)}" ${String(r.id)===String(row.roomId||'')?'selected':''}>${esc(linkLabel('accom_rooms',r))}</option>`).join('')}
+          ${rooms.map(r=>`<option value="${esc(r.id)}" ${String(r.id)===String(row[f.key]||'')?'selected':''}>${esc(linkLabel('accom_rooms',r))}</option>`).join('')}
         </select></td>`;
       }
       return `<td>${fieldDisplay(f,row[f.key],linkMaps,row)}</td>`;
@@ -3035,7 +3097,7 @@
         if(!row) return;
         sel.disabled = true;
         try{
-          const updated = buildUpdate(row, sel.value);
+          const updated = buildUpdate(row, sel.value, sel.dataset.field);
           await apiUpdate('subscriptions', updated);
           await syncSubscriptionGuest(updated);
           render();
@@ -3044,11 +3106,14 @@
         }
       });
     };
-    // تغيير الرحلة مابيمسحش الفندق/الغرفة المختارين: أي فندق مسموح لأي رحلة
-    // (ensureTripHotelLink هيربطهم تلقائيًا)، فمفيش داعي يفقد المستخدم اختياره.
-    container.querySelectorAll('.assign-trip').forEach(sel=>handle(sel,(row,val)=>({...row, tripId:val})));
-    container.querySelectorAll('.assign-hotel').forEach(sel=>handle(sel,(row,val)=>({...row, hotelId:val, roomId:''})));
-    container.querySelectorAll('.assign-room').forEach(sel=>handle(sel,(row,val)=>({...row, roomId:val})));
+    // فندق/غرفة مكة وفندق/غرفة المدينة مستقلين عن بعض، والفندق/الغرفة القديمين بيتفضّوا.
+    const clean = r=>({...r, hotelId:'', roomId:''});
+    container.querySelectorAll('.assign-trip').forEach(sel=>handle(sel,(row,val)=>clean({...row, tripId:val})));
+    container.querySelectorAll('.assign-hotel').forEach(sel=>handle(sel,(row,val,field)=>{
+      const roomKey = field.replace('HotelId','RoomId');
+      return clean({...row, [field]:val, [roomKey]:''});
+    }));
+    container.querySelectorAll('.assign-room').forEach(sel=>handle(sel,(row,val,field)=>clean({...row, [field]:val})));
   }
 
   /* ---------------- المهتمون والمندوبون: بوابة اختيار بين مربعين ---------------- */
@@ -3152,6 +3217,7 @@
     await getDataMany([key, ...((isPRUser()||key==='visits')?['employees']:[]), ...linkRefs, ...extraRefs]);
     const allData = await getData(key);
     let data = await filterPRData(key, allData);
+    if(key==='subscriptions') data = data.map(withSubAccom);
 
     if(options.forcedFilter){
       const ff = options.forcedFilter;
@@ -3671,7 +3737,8 @@
     if(key==='subscriptions') refKeys.push('trip_hotels');
     await getDataMany([key, 'employees', ...refKeys]);
     const list = await getData(key);
-    const row = id? list.find(r=>r.id===id) : {};
+    let row = id? list.find(r=>r.id===id) : {};
+    if(id && key==='subscriptions') row = withSubAccom(row);
     if(id && !prCanEditRow(key,row)){ alert('ليس لديك صلاحية لتعديل هذه البيانات'); return; }
     let refOptions = {};
     for(const f of mod.fields){
@@ -3728,21 +3795,25 @@
 
       // الرحلة / الفندق / الغرفة الخاصة بالشخص المرتبط (مستقلة عن الاشتراك الأساسي)
       const trips = cache.trips||[];
-      const hotelsOpts = subsHotelsForTrip(item.tripId);
-      const roomsOpts = subsRoomsForHotel(item.hotelId);
+      item = withSubAccom(item);
+      const cityBlock = SUB_ACCOM.map(c=>{
+        const hotelsOpts = hotelsOfCity(c.city).map(h=>({id:h.id, label: linkLabel('accom_hotels', h)}));
+        const roomsOpts = subsRoomsForHotel(item[c.hotelKey]);
+        return `
+        <div class="field"><label>فندق ${c.city==='مكة'?'مكة':'المدينة'}</label>
+          <select data-k="${c.hotelKey}" class="linked-hotel" data-city="${c.city}"><option value="">— بدون —</option>
+            ${linkOptionsHtml(hotelsOpts, item[c.hotelKey])}
+          </select></div>
+        <div class="field"><label>غرفة ${c.city==='مكة'?'مكة':'المدينة'}</label>
+          <select data-k="${c.roomKey}" class="linked-room" ${!item[c.hotelKey]?'disabled':''}><option value="">— بدون —</option>
+            ${roomsOpts.map(r=>`<option value="${esc(r.id)}" ${String(r.id)===String(item[c.roomKey]||'')?'selected':''}>${esc(linkLabel('accom_rooms',r))}</option>`).join('')}
+          </select></div>`;
+      }).join('');
       const accomHtml = `
         <div class="field"><label>الرحلة (التسكين)</label>
           <select data-k="tripId" class="linked-trip"><option value="">— بدون —</option>
             ${trips.map(t=>`<option value="${esc(t.id)}" ${String(t.id)===String(item.tripId||'')?'selected':''}>${esc(linkLabel('trips',t))}</option>`).join('')}
-          </select></div>
-        <div class="field"><label>الفندق</label>
-          <select data-k="hotelId" class="linked-hotel"><option value="">— بدون —</option>
-            ${linkOptionsHtml(hotelsOpts, item.hotelId)}
-          </select></div>
-        <div class="field"><label>الغرفة</label>
-          <select data-k="roomId" class="linked-room" ${!item.hotelId?'disabled':''}><option value="">— بدون —</option>
-            ${roomsOpts.map(r=>`<option value="${esc(r.id)}" ${String(r.id)===String(item.roomId||'')?'selected':''}>${esc(linkLabel('accom_rooms',r))}</option>`).join('')}
-          </select></div>`;
+          </select></div>${cityBlock}`;
 
       return `<div class="linked-block" data-id="${esc(item.id||'')}" style="border:1.5px dashed var(--gold-500);border-radius:12px;padding:14px;margin-top:12px;background:var(--sand-50);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
@@ -3780,15 +3851,9 @@
       linkedList.addEventListener('change', e=>{
         const block = e.target.closest('.linked-block');
         if(!block) return;
-        if(e.target.classList.contains('linked-trip')){
-          const hs = block.querySelector('.linked-hotel');
-          const hl = subsHotelsForTrip(e.target.value);
-          const keepH = hl.some(o=>String(o.id)===String(hs.value)) ? hs.value : '';
-          hs.innerHTML = '<option value="">— بدون —</option>' + linkOptionsHtml(hl, keepH);
-          hs.dispatchEvent(new Event('change',{bubbles:true}));
-        }
         if(e.target.classList.contains('linked-hotel')){
-          const rs = block.querySelector('.linked-room');
+          // الغرفة اللي بعد الفندق مباشرة في نفس المدينة
+          const rs = e.target.closest('.field').nextElementSibling.querySelector('.linked-room');
           const rl = subsRoomsForHotel(e.target.value);
           const keepR = rl.some(r=>String(r.id)===String(rs.value)) ? rs.value : '';
           rs.innerHTML = '<option value="">— بدون —</option>' +
@@ -3900,6 +3965,8 @@
           if(el) newRow[f.key] = el.value;
         }
         Object.keys(forcedValues).forEach(k=>{ newRow[k] = forcedValues[k]; });
+        // الفندق/الغرفة القديمين اتنقلوا لمكة/المدينة، فبنفضّيهم عشان مايتكررش.
+        if(key==='subscriptions'){ newRow.hotelId=''; newRow.roomId=''; }
 
         // تحويل مهتم → مشترك: كود أوميجا وتاريخ الدفع ونوع الباقة وقيمة الاشتراك إجبارية
         // (قيمة القسط وعدد الشهور والمقدم اختيارية).
@@ -3961,11 +4028,13 @@
             const existing = block.dataset.id ? allSubs.find(s=>String(s.id)===String(block.dataset.id)) : null;
             const rec = existing ? {...existing} : {
               id: uid(), leadId:'', tripId:'', hotelId:'', roomId:'',
+              makkahHotelId:'', makkahRoomId:'', madinaHotelId:'', madinaRoomId:'',
               subscriptionDate: todayISO()
             };
             block.querySelectorAll('[data-k]').forEach(el=>{ rec[el.dataset.k] = el.value; });
             LINK_SHARED_KEYS.forEach(k=>{ rec[k] = newRow[k] || ''; });
             rec.linkGroupId = newRow.linkGroupId;
+            rec.hotelId=''; rec.roomId='';
             if(!rec.customerName) throw new Error('اسم الشخص المرتبط مطلوب');
             if(existing){ await apiUpdate('subscriptions', rec); await syncSubscriptionGuest(rec); }
             else { await apiAdd('subscriptions', rec); await syncSubscriptionGuest(rec); }
