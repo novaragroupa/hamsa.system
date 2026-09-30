@@ -1352,7 +1352,11 @@
       return data.filter(r=>normTeam(r.name)===team);
     }
     if(key==='indoor_leads' || key==='indoor_data' || key==='subscriptions'){
-      return data.filter(r=>teamNames.has(r.responsiblePerson) && (state.user.role==='pr_leader' || sameName(r.responsiblePerson,myName)));
+      return data.filter(r=>{
+        // مشترك اتضاف على رحلة = ظاهر للكل (عرض فقط)، غير كده بيتفلتر بالمسؤول/الفريق
+        if(key==='subscriptions' && String(r.tripId||'').trim()) return true;
+        return teamNames.has(r.responsiblePerson) && (state.user.role==='pr_leader' || sameName(r.responsiblePerson,myName));
+      });
     }
     if(key==='pr_member_data'){
       return data.filter(r=>teamNames.has(r.memberId) && (state.user.role==='pr_leader' || sameName(r.memberId,myName)));
