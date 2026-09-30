@@ -350,16 +350,25 @@ function isWriteActionAllowed(session, table, payload, action) {
   if (action === 'delete') return check('delete');
   if (action === 'batchDelete') return check('delete');
 
-  const existingRows = getCachedRows(table);
+  // لو صلاحية الإضافة = صلاحية التعديل (الحالة العادية من غير تخصيص)، مش محتاجين نعرف
+  // الصف جديد ولا لأ — فبنتجنب قراءة الجدول كله في كل عملية كتابة.
+  const addOk = check('add'), editOk = check('edit');
+  if (addOk === editOk && (action === 'upsert' || action === 'batchUpsert')) return addOk;
+
+  let existingIds = null;
   const isNew = function(row) {
+    if (!existingIds) {
+      existingIds = {};
+      getCachedRows(table).forEach(function(r){ existingIds[String(r.id || '')] = true; });
+    }
     const id = String((row || {}).id || '');
-    return !id || !existingRows.some(function(r){ return String(r.id || '') === id; });
+    return !id || !existingIds[id];
   };
 
-  if (action === 'upsert') return check(isNew(payload) ? 'add' : 'edit');
+  if (action === 'upsert') return isNew(payload) ? addOk : editOk;
   if (action === 'batchUpsert') {
     const rows = Array.isArray((payload || {}).rows) ? payload.rows : [];
-    return rows.every(function(r){ return check(isNew(r) ? 'add' : 'edit'); });
+    return rows.every(function(r){ return isNew(r) ? addOk : editOk; });
   }
   return roleOk;
 }
@@ -760,6 +769,27 @@ function normTeam(v) {
   return String(v || '').trim();
 }
 
+// طبّع اسم الشخص للمقارنة: بيشيل التشكيل والتطويل، بيوحّد أشكال الألف (أ/إ/آ → ا)
+// والياء (ى → ي)، وبيدمج المسافات المتكررة، وبيتجاهل حالة الأحرف. كده اختلاف بسيط في
+// الكتابة بين users / employees / الصفوف (مسافة زيادة، همزة) ما يخفّيش شغل الموظف.
+function normName(v) {
+  return String(v || '')
+    .replace(/[\u064B-\u065F\u0670\u0640]/g, '')
+    .replace(/[\u0622\u0623\u0625]/g, '\u0627')
+    .replace(/\u0649/g, '\u064A')
+    .replace(/[\u00A0\s]+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+// اسم المستخدم الحالي "الحقيقي": من صف الموظف (employees.name) عن طريق employeeId،
+// لأن الواجهة بتعرض/تكتب الاسم ده. لو مفيش صف موظف بنرجع لـ session.name.
+function sessionOwnName(session) {
+  const emps = getCachedRows('employees');
+  const own = emps.find(function(e){ return String(e.id || '') === String(session.employeeId || ''); });
+  return String((own && own.name) || session.name || '').trim();
+}
+
 // فريق المستخدم الحالي "الحقيقي": بنجيبه من صف الموظف نفسه (employees.team) بدل
 // ما نعتمد بس على session.team (اللي مصدرها users.team). السبب: لو حد عدّل فريق
 // موظف من صفحة "الموظفون" بعد ما اتعمله حساب، كان بيتحدث employees.team بس، من
@@ -780,10 +810,11 @@ function employeeNamesForSession(session) {
   // (Sheets API round-trip) لكل جدول في كل bulk request. دلوقتي بتستخدم نفس كاش
   // getCachedRows('employees') المستخدم في باقي النظام (60 ثانية) بدل قراءة مباشرة.
   const emps = getCachedRows('employees');
-  if (session.role === 'pr_manager') return emps.map(x => String(x.name || '')).filter(Boolean);
+  // الأسماء بترجع مُطبَّعة (normName) — كل المقارنات بتتم على الأسماء المُطبَّعة.
+  if (session.role === 'pr_manager') return emps.map(x => normName(x.name)).filter(Boolean);
   const myTeam = sessionOwnTeam(session);
   return emps.filter(x => normTeam(x.team) === myTeam && x.status !== 'inactive')
-    .map(x => String(x.name || '')).filter(Boolean);
+    .map(x => normName(x.name)).filter(Boolean);
 }
 
 // لو اتعدل فريق موظف من صفحة "الموظفون"، بنزامن نفس القيمة على حساب تسجيل
@@ -800,8 +831,12 @@ function syncUserTeamFromEmployee(employeeRecord) {
     const user = users.find(function(u){ return String(u.employeeId || '') === String(employeeRecord.id); });
     if (!user) return;
     const newTeam = normTeam(employeeRecord.team);
-    if (normTeam(user.team) === newTeam) return; // متزامنين بالفعل، مفيش داعي لكتابة زيادة
+    const newName = String(employeeRecord.name || '').trim();
+    const teamSame = normTeam(user.team) === newTeam;
+    const nameSame = !newName || String(user.name || '').trim() === newName;
+    if (teamSame && nameSame) return; // متزامنين بالفعل، مفيش داعي لكتابة زيادة
     user.team = newTeam;
+    if (newName) user.name = newName; // مزامنة الاسم كمان عشان الفلترة بالاسم ما تتكسرش
     upsertRow(userSheet, user);
     invalidateCachedRows('users');
   } catch (e) {
@@ -842,7 +877,7 @@ function filterRowsForSession(rows, table, session) {
     const myTeam = sessionOwnTeam(session);
     const names = employeeNamesForSession(session);
     return rows.filter(function(r){
-      return (myTeam && normTeam(r.team) === myTeam) || names.indexOf(String(r.user || '')) >= 0;
+      return (myTeam && normTeam(r.team) === myTeam) || names.indexOf(normName(r.user)) >= 0;
     });
   }
 
@@ -866,7 +901,7 @@ function filterRowsForSession(rows, table, session) {
   if (session.role === 'pr_manager') return rows;
 
   const allowed = employeeNamesForSession(session);
-  const myName = session.name || '';
+  const myName = normName(sessionOwnName(session));
 
   if (table === 'employees') {
     // عضو الفريق (pr_member) يشوف صفّه هو بس في صفحة "الموظفون"، ومش
@@ -875,7 +910,7 @@ function filterRowsForSession(rows, table, session) {
     if (session.role === 'pr_member') {
       return rows.filter(r => String(r.id || '') === String(session.employeeId || ''));
     }
-    return rows.filter(r => allowed.indexOf(String(r.name || '')) >= 0);
+    return rows.filter(r => allowed.indexOf(normName(r.name)) >= 0);
   }
 
   if (table === 'teams') {
@@ -884,14 +919,17 @@ function filterRowsForSession(rows, table, session) {
 
   if (['indoor_leads','indoor_data','subscriptions'].indexOf(table) >= 0) {
     return rows.filter(r => {
-      const owner = String(r.responsiblePerson || '');
+      // المشترك اللي اتضاف على رحلة (tripId مش فاضي) بيظهر لكل اللي يقدر يقرأ الاشتراكات،
+      // مش بس للمسؤول عنه. (عرض فقط — التعديل/الحذف لسه مقصور على صاحبه في rowBelongsToSession.)
+      if (table === 'subscriptions' && String(r.tripId || '').trim()) return true;
+      const owner = normName(r.responsiblePerson);
       return session.role === 'pr_leader' ? allowed.indexOf(owner) >= 0 : owner === myName;
     });
   }
 
   if (table === 'pr_member_data') {
     return rows.filter(r => {
-      const owner = String(r.memberId || '');
+      const owner = normName(r.memberId);
       return session.role === 'pr_leader' ? allowed.indexOf(owner) >= 0 : owner === myName;
     });
   }
@@ -932,15 +970,15 @@ function rowBelongsToSession(session, table, row) {
     if (session.role === 'pr_manager') return true;
     if (session.role === 'accommodation' && table === 'subscriptions') return true;
     const allowed = employeeNamesForSession(session);
-    const owner = String(row.responsiblePerson || '');
-    return session.role === 'pr_leader' ? allowed.indexOf(owner) >= 0 : owner === String(session.name || '');
+    const owner = normName(row.responsiblePerson);
+    return session.role === 'pr_leader' ? allowed.indexOf(owner) >= 0 : owner === normName(sessionOwnName(session));
   }
 
   if (table === 'pr_member_data') {
     if (session.role === 'pr_manager') return true;
     const allowed = employeeNamesForSession(session);
-    const owner = String(row.memberId || '');
-    return session.role === 'pr_leader' ? allowed.indexOf(owner) >= 0 : owner === String(session.name || '');
+    const owner = normName(row.memberId);
+    return session.role === 'pr_leader' ? allowed.indexOf(owner) >= 0 : owner === normName(sessionOwnName(session));
   }
 
   if (table === 'employees' && session.role === 'pr_member') {
@@ -1094,7 +1132,7 @@ function enforceOwnership(session, table, payload) {
   }
 
   const allowed = employeeNamesForSession(session);
-  const myName = session.name || '';
+  const myName = sessionOwnName(session); // الاسم الأصلي (غير مُطبَّع) عشان يتخزن زي ما هو في الشيت
 
   if (session.role === 'pr_member') {
     if (['indoor_leads','indoor_data','subscriptions'].indexOf(table) >= 0) {
@@ -1109,11 +1147,11 @@ function enforceOwnership(session, table, payload) {
 
   if (session.role === 'pr_leader') {
     if (['indoor_leads','indoor_data','subscriptions'].indexOf(table) >= 0 &&
-        p.responsiblePerson && allowed.indexOf(String(p.responsiblePerson)) < 0) {
+        p.responsiblePerson && allowed.indexOf(normName(p.responsiblePerson)) < 0) {
       throw new Error('لا يمكن ربط البيانات بعضو خارج فريقك');
     }
     if (table === 'pr_member_data' &&
-        p.memberId && allowed.indexOf(String(p.memberId)) < 0) {
+        p.memberId && allowed.indexOf(normName(p.memberId)) < 0) {
       throw new Error('لا يمكن ربط الداتا بعضو خارج فريقك');
     }
   }
@@ -1279,16 +1317,73 @@ let _rowsMemo = {};
 
 function resetRowsMemo() { _rowsMemo = {}; }
 
+// كاش بين الطلبات (CacheService) للجداول الصغيرة اللي بتتقرا في كل طلب للتحقق من
+// الجلسة والصلاحيات (users / employees / user_permissions / teams). كل كتابة عن طريق
+// النظام بتمسح الكاش فورًا (invalidateCachedRows)، فالتغيير بيظهر على طول. الاستثناء
+// الوحيد: تعديل يدوي مباشر في الشيت، بيظهر بعد LOOKUP_CACHE_TTL ثانية بالكتير.
+// جداول البيانات (leads/subscriptions/...) عمدًا مش مكاشّة عشان تفضل دايمًا طازة.
+const LOOKUP_CACHE_TABLES = ['users','employees','user_permissions','teams'];
+const LOOKUP_CACHE_TTL = 30;      // ثواني
+const LOOKUP_CHUNK_CHARS = 30000; // حد CacheService 100KB للقيمة الواحدة (العربي = 2 بايت/حرف)
+const LOOKUP_MAX_CHUNKS = 20;
+
+function lookupCacheGet(name) {
+  try {
+    const cache = CacheService.getScriptCache();
+    const n = Number(cache.get('rows:' + name + ':n') || 0);
+    if (!n) return null;
+    const keys = [];
+    for (let i = 0; i < n; i++) keys.push('rows:' + name + ':' + i);
+    const parts = cache.getAll(keys);
+    let s = '';
+    for (let i = 0; i < n; i++) {
+      const p = parts[keys[i]];
+      if (p == null) return null;
+      s += p;
+    }
+    return JSON.parse(s);
+  } catch (_) { return null; }
+}
+
+function lookupCachePut(name, rows) {
+  try {
+    const s = JSON.stringify(rows);
+    const n = Math.max(1, Math.ceil(s.length / LOOKUP_CHUNK_CHARS));
+    if (n > LOOKUP_MAX_CHUNKS) return; // كبير قوي: نقرأ من الشيت بدل ما نكاشّ
+    const obj = {};
+    for (let i = 0; i < n; i++) obj['rows:' + name + ':' + i] = s.substr(i * LOOKUP_CHUNK_CHARS, LOOKUP_CHUNK_CHARS);
+    obj['rows:' + name + ':n'] = String(n);
+    CacheService.getScriptCache().putAll(obj, LOOKUP_CACHE_TTL);
+  } catch (_) {}
+}
+
+function lookupCacheClear(name) {
+  try {
+    const cache = CacheService.getScriptCache();
+    const nKey = 'rows:' + name + ':n';
+    const n = Number(cache.get(nKey) || 0);
+    const keys = [nKey];
+    for (let i = 0; i < Math.max(n, LOOKUP_MAX_CHUNKS); i++) keys.push('rows:' + name + ':' + i);
+    cache.removeAll(keys);
+  } catch (_) {}
+}
+
 function getCachedRows(sheetName) {
   if (_rowsMemo[sheetName]) return _rowsMemo[sheetName];
-  const sheet = SpreadsheetApp.getActive().getSheetByName(sheetName);
-  const rows = sheet ? readRows(sheet) : [];
+  const useLookup = LOOKUP_CACHE_TABLES.indexOf(sheetName) >= 0;
+  let rows = useLookup ? lookupCacheGet(sheetName) : null;
+  if (!rows) {
+    const sheet = SpreadsheetApp.getActive().getSheetByName(sheetName);
+    rows = sheet ? readRows(sheet) : [];
+    if (useLookup) lookupCachePut(sheetName, rows);
+  }
   _rowsMemo[sheetName] = rows;
   return rows;
 }
 
 function invalidateCachedRows(sheetName) {
   delete _rowsMemo[sheetName];
+  if (LOOKUP_CACHE_TABLES.indexOf(sheetName) >= 0) lookupCacheClear(sheetName);
 }
 
 function upsertRowsBatch(sheet, rows) {
@@ -1475,4 +1570,35 @@ function rowsById(rows) {
 
 function json(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+/* ---------------- تشخيص: أسماء في الصفوف مش مطابقة لأي موظف ----------------
+ * شغّلها يدويًا من محرر Apps Script (Run → diagnoseNameMismatches) وشوف Logs.
+ * بتطبع كل اسم مسؤول (responsiblePerson / memberId) مش لاقي له موظف بنفس الاسم
+ * (بعد التطبيع) — دي الصفوف اللي هتفضل مخفية عن صاحبها لحد ما الاسم يتصلّح. */
+function diagnoseNameMismatches() {
+  const ss = SpreadsheetApp.getActive();
+  const emps = readRows(ss.getSheetByName('employees') || getOrCreateSheet(ss, 'employees'));
+  const known = {};
+  emps.forEach(function(e){ known[normName(e.name)] = true; });
+  const checks = [
+    ['indoor_leads','responsiblePerson'], ['indoor_data','responsiblePerson'],
+    ['subscriptions','responsiblePerson'], ['pr_member_data','memberId']
+  ];
+  const report = [];
+  checks.forEach(function(c){
+    const sh = ss.getSheetByName(c[0]);
+    if (!sh) return;
+    const counts = {};
+    readRows(sh).forEach(function(r){
+      const raw = String(r[c[1]] || '');
+      if (!raw) return;
+      if (!known[normName(raw)]) counts[raw] = (counts[raw] || 0) + 1;
+    });
+    Object.keys(counts).forEach(function(n){
+      report.push(c[0] + '.' + c[1] + ' = \"' + n + '\"  (' + counts[n] + ' صف)');
+    });
+  });
+  Logger.log(report.length ? report.join('\n') : 'كل الأسماء مطابقة لموظفين موجودين ✅');
+  return report;
 }
