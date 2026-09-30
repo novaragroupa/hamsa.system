@@ -195,7 +195,7 @@ const ALL_TABLES = [
   'users','teams','employees','companies','visits','indoor_leads','indoor_data',
   'callcenter_feedback','callcenter_payments','accommodation','pr_member_data',
   'subscriptions','trips','trip_hotels','accom_hotels','accom_rooms','accom_guests',
-  'dashboards','widgets','accounting','app_settings'
+  'dashboards','widgets','accounting','app_settings','edit_logs','user_permissions'
 ];
 
 const TABLE_READ_ROLES = {
@@ -222,7 +222,11 @@ const TABLE_READ_ROLES = {
   dashboards: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','callcenter','accommodation','system','analyst'],
   widgets: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','callcenter','accommodation','system','analyst'],
   accounting: ['admin'],
-  app_settings: ['admin','pr_in','accommodation','system']
+  app_settings: ['admin','pr_in','accommodation','system'],
+  // سجل التعديلات: القراءة للأدمن ورئيس الفريق فقط (والتصفية حسب الفريق في filterRowsForSession).
+  edit_logs: ['admin','pr_leader'],
+  // صلاحيات الموظفين: كل مستخدم يقرأ سجله هو بس (الأدمن يقرأ الكل) - التصفية في filterRowsForSession.
+  user_permissions: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','callcenter','accommodation','system','analyst','accounting','reception']
 };
 
 const TABLE_WRITE_ROLES = {
@@ -245,7 +249,11 @@ const TABLE_WRITE_ROLES = {
   dashboards: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','callcenter','accommodation','system','analyst'],
   widgets: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','callcenter','accommodation','system','analyst'],
   accounting: ['admin'],
-  app_settings: ['admin','pr_in','accommodation','system']
+  app_settings: ['admin','pr_in','accommodation','system'],
+  // أي مستخدم مسجّل يقدر يضيف سطر في سجل التعديلات (بيتأمّن في enforceOwnership/canMutateTable).
+  edit_logs: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','callcenter','accommodation','system','analyst','accounting','reception'],
+  // تعديل الصلاحيات للأدمن فقط.
+  user_permissions: ['admin']
 };
 
 const ANALYTICS_ROLES = ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','callcenter','accommodation','system','analyst'];
@@ -273,12 +281,87 @@ function roleAllows(map, session, table) {
   return !!allowed && allowed.indexOf(String(session.role || '')) >= 0;
 }
 
+
+/* ---------------- صلاحيات مخصّصة لكل موظف (user_permissions) ----------------
+ * الأدمن بيخصص من صفحة "الصلاحيات" عرض/إضافة/تعديل/حذف لكل قسم لموظف معين.
+ * قبل كده السيرفر كان بيتجاهل الجدول ده تمامًا (مش موجود في ALL_TABLES) وبيطبّق صلاحية
+ * الدور بس، فأي تخصيص كان بيظهر في الواجهة وبعدين السيرفر يرفض الكتابة أو القراءة.
+ * دلوقتي: لو فيه تخصيص لقسم → هو اللي بيتطبّق (true = مسموح، false = ممنوع)،
+ * ولو مفيش تخصيص → بنرجع لصلاحية الدور زي الأول. الأدمن مش بيتأثر.
+ * مقصور على جداول البيانات العادية (مش users/accounting/app_settings/dashboards...). */
+const PERM_OVERRIDE_TABLES = [
+  'teams','employees','companies','visits','indoor_leads','indoor_data',
+  'callcenter_feedback','callcenter_payments','accommodation','pr_member_data',
+  'subscriptions','trips','trip_hotels','accom_hotels','accom_rooms','accom_guests'
+];
+
+// القسم في الواجهة (MODULES) ممكن يغطي أكتر من جدول في الشيت.
+function permModuleKeysForTable(table) {
+  if (['trips','trip_hotels','accom_hotels','accom_rooms','accom_guests'].indexOf(table) >= 0) return ['trips_hub'];
+  if (table === 'subscriptions') return ['subscriptions'];
+  return [table];
+}
+
+function parsePermsField(v) {
+  if (v && typeof v === 'object') return v; // readRows بتحوّل نص JSON لكائن أوتوماتيك
+  try { return JSON.parse(String(v || '{}')) || {}; } catch (_) { return {}; }
+}
+
+// true / false = تخصيص صريح، null = مفيش تخصيص (استخدم صلاحية الدور)
+function permOverride(session, table, action) {
+  if (!session || String(session.role || '') === 'admin') return null;
+  if (PERM_OVERRIDE_TABLES.indexOf(table) < 0) return null;
+  if (!session.employeeId) return null;
+  const rec = getCachedRows('user_permissions').find(function(r){
+    return String(r.employeeId || '') === String(session.employeeId || '');
+  });
+  if (!rec) return null;
+  const map = parsePermsField(rec.perms);
+  const keys = permModuleKeysForTable(table);
+  for (let i = 0; i < keys.length; i++) {
+    const p = map[keys[i]];
+    if (p && Object.prototype.hasOwnProperty.call(p, action)) return !!p[action];
+  }
+  return null;
+}
+
 function isTableReadAllowed(session, table) {
+  if (String(session.role || '') !== 'admin') {
+    const ov = permOverride(session, table, 'view');
+    if (ov !== null) return ov;
+  }
   return roleAllows(TABLE_READ_ROLES, session, table);
 }
 
 function isTableWriteAllowed(session, table) {
   return String(session.role || '') === 'admin' || roleAllows(TABLE_WRITE_ROLES, session, table);
+}
+
+// صلاحية الكتابة لعملية معينة مع مراعاة التخصيص (إضافة / تعديل / حذف).
+function isWriteActionAllowed(session, table, payload, action) {
+  if (String(session.role || '') === 'admin') return true;
+  const roleOk = roleAllows(TABLE_WRITE_ROLES, session, table);
+
+  const check = function(act) {
+    const ov = permOverride(session, table, act);
+    return ov !== null ? ov : roleOk;
+  };
+
+  if (action === 'delete') return check('delete');
+  if (action === 'batchDelete') return check('delete');
+
+  const existingRows = getCachedRows(table);
+  const isNew = function(row) {
+    const id = String((row || {}).id || '');
+    return !id || !existingRows.some(function(r){ return String(r.id || '') === id; });
+  };
+
+  if (action === 'upsert') return check(isNew(payload) ? 'add' : 'edit');
+  if (action === 'batchUpsert') {
+    const rows = Array.isArray((payload || {}).rows) ? payload.rows : [];
+    return rows.every(function(r){ return check(isNew(r) ? 'add' : 'edit'); });
+  }
+  return roleOk;
 }
 
 function loginRateKey(username) {
@@ -748,6 +831,21 @@ function filterRowsForSession(rows, table, session) {
     return rows.filter(function(r){ return String(r.id || '') === String(session.uid || '') || session.role === 'admin' || session.role === 'hr'; });
   }
 
+  if (table === 'user_permissions') {
+    if (session.role === 'admin') return rows;
+    return rows.filter(function(r){ return String(r.employeeId || '') === String(session.employeeId || ''); });
+  }
+
+  if (table === 'edit_logs') {
+    if (session.role === 'admin') return rows;
+    if (session.role !== 'pr_leader') return [];
+    const myTeam = sessionOwnTeam(session);
+    const names = employeeNamesForSession(session);
+    return rows.filter(function(r){
+      return (myTeam && normTeam(r.team) === myTeam) || names.indexOf(String(r.user || '')) >= 0;
+    });
+  }
+
   if (table === 'dashboards') {
     const allowedModules = serverAnalyticsModulesForRole(session.role);
     if (session.role === 'admin' || session.role === 'analyst') {
@@ -827,6 +925,9 @@ function rowBelongsToSession(session, table, row) {
   if (!row) return false;
   if (session.role === 'admin') return true;
 
+  // سجل التعديلات ما يتعدّلش ولا يتمسح بعد ما يتسجل (غير للأدمن).
+  if (table === 'edit_logs') return false;
+
   if (['indoor_leads','indoor_data','subscriptions'].indexOf(table) >= 0) {
     if (session.role === 'pr_manager') return true;
     if (session.role === 'accommodation' && table === 'subscriptions') return true;
@@ -858,7 +959,16 @@ function canMutateTable(session, table, payload, action) {
   // createEmployeeAccount / changePassword actions instead.
   if (table === 'users') return false;
 
-  if (!isTableWriteAllowed(session, table)) return false;
+  // سجل التعديلات: إضافة فقط (append-only). الأدمن بس يقدر يمسح/يعدّل.
+  if (table === 'edit_logs') {
+    if (String(session.role || '') === 'admin') return true;
+    return action === 'upsert' || action === 'batchUpsert';
+  }
+
+  // الصلاحيات المخصّصة: للأدمن فقط.
+  if (table === 'user_permissions') return String(session.role || '') === 'admin';
+
+  if (!isWriteActionAllowed(session, table, payload, action)) return false;
 
   // التسكين مسموحله بس يعدّل (تعيين رحلة/فندق/غرفة) على مشترك موجود بالفعل —
   // ممنوع يضيف مشترك جديد أو يحذف أو يعمل batch. enforceOwnership تحت بتقصر
@@ -959,6 +1069,15 @@ function canMutateTable(session, table, payload, action) {
 
 function enforceOwnership(session, table, payload) {
   const p = Object.assign({}, payload || {});
+
+  // سجل التعديلات: بصمة المستخدم بتتحط من السيرفر عشان محدش يزوّر اسم غيره.
+  if (table === 'edit_logs' && session.role !== 'admin') {
+    p.user = String(session.name || '');
+    p.username = String(session.username || '');
+    p.role = String(session.role || '');
+    p.team = sessionOwnTeam(session);
+    return p;
+  }
 
   // التسكين: نتجاهل أي حقل تاني غير الرحلة/الفندق/الغرفة، ونمنع إنشاء مشترك جديد.
   if (session.role === 'accommodation' && table === 'subscriptions') {
