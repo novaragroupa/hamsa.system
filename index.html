@@ -600,6 +600,7 @@
     dashboards: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','callcenter','accommodation','system','analyst'],
     widgets: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','callcenter','accommodation','system','analyst'],
     accounting: ['admin'],
+    user_permissions: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','callcenter','accommodation','system','analyst','accounting','reception'],
     app_settings: ['admin','pr_in','accommodation','system']
   };
   function canReadTable(t){
@@ -1045,7 +1046,7 @@
   /* ---------------- عمليات البيانات (فورية + مزامنة في الخلفية) ---------------- */
 
   /* ---------------- سجل التعديلات (قسم "التعديلات") ---------------- */
-  const LOG_SKIP = new Set(['edit_logs','app_settings','dashboards','widgets']);
+  const LOG_SKIP = new Set(['edit_logs','app_settings','dashboards','widgets','user_permissions']);
   const logQ = []; let logRunning = false;
   function logFieldLabel(table,key){ const m=MODULES[table]; const f=m&&m.fields&&m.fields.find(x=>x.key===key); return f?f.label:key; }
   function logVal(v){
@@ -1345,6 +1346,7 @@
     return data;
   }
   function prCanEditRow(key,row){
+    { const ov = hasPerm(key, row&&row.id ? 'edit' : 'add'); if(ov!==null) return ov; }
     // عرض فقط: التسكين والحسابات بقى يقدروا يشوفوا الاشتراكات/الفائزين، بس
     // مايقدروش يضيفوا أو يعدلوا أو يحذفوا فيهم — باقي صلاحياتهم (زي التسكين
     // والرحلات) متغيرتش خالص.
@@ -1562,15 +1564,27 @@
   }
 
 
+  /* ---------------- الصلاحيات من النظام (جدول user_permissions) ----------------
+     لو الموظف ليه سجل صلاحيات: بيتطبّق بدل صلاحية الدور. لو مفيش: بيرجع لصلاحية الدور القديمة. */
+  const PERM_ACTIONS = [['view','عرض'],['add','إضافة'],['edit','تعديل'],['delete','حذف']];
+  const PERM_HIDDEN = ['companies','callcenter_payments','indoor_data'];
+  function permSections(){ return Object.entries(MODULES).filter(([k])=>!PERM_HIDDEN.includes(k)); }
+  function permRecordFor(emp){ return emp ? (cache.user_permissions||[]).find(r=>String(r.employeeId)===String(emp.id)) || null : null; }
+  function permMap(rec){ try{ return JSON.parse((rec&&rec.perms)||'{}')||{}; }catch(e){ return {}; } }
+  // null = مفيش تخصيص لهذا القسم → نرجع لصلاحية الدور
+  function hasPerm(key, action){
+    if(!state.user || state.user.role==='admin') return null;
+    const p = permMap(permRecordFor(currentEmployee()))[key];
+    return p ? !!p[action] : null;
+  }
+  function canViewModule(key){
+    const m = MODULES[key]; if(!m) return false;
+    const v = hasPerm(key,'view');
+    return v===null ? m.roles.includes(state.user.role) : v;
+  }
+  function prCanDelete(key,row){ const ov=hasPerm(key,'delete'); return ov!==null ? ov : prCanEditRow(key,row); }
   function accessibleModules(){
-    const hiddenModules = new Set(['companies','callcenter_payments','indoor_data']);
-    if(state.user?.role==='pr_manager') {
-      return Object.entries(MODULES).filter(([k,m])=>!hiddenModules.has(k) && m.roles.includes('pr_manager'));
-    }
-    if(state.user?.role==='pr_leader' || state.user?.role==='pr_member') {
-      return Object.entries(MODULES).filter(([k,m])=>!hiddenModules.has(k) && m.roles.includes(state.user.role));
-    }
-    return Object.entries(MODULES).filter(([k,m])=>!hiddenModules.has(k) && m.roles.includes(state.user.role));
+    return Object.entries(MODULES).filter(([k])=>!PERM_HIDDEN.includes(k) && canViewModule(k));
   }
 
   function analyticsAccessibleModules(){
@@ -1617,6 +1631,9 @@
       const g = MODULE_GROUP_OF[k] || 'ops';
       groups[g].push(`<button class="nav-item ${state.view===k?'active':''}" data-view="${k}">${m.icon}<span>${esc(m.title)}</span></button>`);
     });
+    if(state.user.role==='admin'){
+      groups.admin.push(`<button class="nav-item ${state.view==='permissions'?'active':''}" data-view="permissions">🔐<span>الصلاحيات</span></button>`);
+    }
     if(['admin','pr_leader'].includes(state.user.role)){
       groups.admin.push(`<button class="nav-item ${state.view==='edit_logs'?'active':''}" data-view="edit_logs">📝<span>التعديلات</span></button>`);
     }
@@ -1676,12 +1693,14 @@
     const page = document.getElementById('page');
     if(!page) return;
     const mods = accessibleModules();
+    if((MODULES[state.view] && !canViewModule(state.view)) || (state.view==='cancelled_subscriptions' && !canViewModule('subscriptions')) || (state.view==='permissions' && state.user.role!=='admin')){ state.view='dashboard'; updateActiveNav(); }
     if(['areas','ledger','companies','callcenter_payments','indoor_data'].includes(state.view)){
       state.view='dashboard'; updateActiveNav();
     }
     if(state.view==='dashboard') await renderDashboard(page, mods);
     else if(state.view==='pr_teams') await renderPRHierarchy(page);
     else if(state.view==='edit_logs') await renderEditLogsSection(page);
+    else if(state.view==='permissions') await renderPermissionsSection(page);
     else if(state.view==='teams') await renderTeamsSection(page);
     else if(state.view==='analytics') await renderAnalytics(page, analyticsAccessibleModules());
     else if(state.view==='accommodation') await renderAccommodationSection(page);
@@ -1694,6 +1713,80 @@
     else if(MODULES[state.view]) await renderModule(page, state.view);
   }
 
+
+
+  /* ---------------- قسم "الصلاحيات" (مدير النظام فقط) ---------------- */
+  async function renderPermissionsSection(page){
+    if(state.user.role!=='admin') return;
+    await getDataMany(['teams','employees','user_permissions']);
+    const emps = (cache.employees||[]).filter(e=>e.status!=='inactive');
+    const teamNames = [...new Set((cache.teams||[]).map(t=>normTeam(t.name)).concat(emps.map(e=>normTeam(e.team))).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ar'));
+    const hasNoTeam = emps.some(e=>!normTeam(e.team));
+    const team = state.permTeam||'';
+    const list = !team ? [] : emps.filter(e=> team==='__none' ? !normTeam(e.team) : normTeam(e.team)===team);
+    const emp = list.find(e=>String(e.id)===String(state.permEmp)) || null;
+    const rec = permRecordFor(emp);
+    const saved = permMap(rec);
+    const rk = emp ? (Object.keys(ROLE_LABELS).find(k=>ROLE_LABELS[k]===emp.department)||'') : '';
+    const cur = (k,m)=>{
+      if(saved[k]) return saved[k];
+      const v = m.roles.includes(rk);
+      return {view:v, add:v&&k!=='subscriptions', edit:v, delete:v};
+    };
+    const selStyle = 'padding:10px 12px;border:1px solid var(--line);border-radius:10px;min-width:220px;font-family:inherit;';
+    const rows = emp ? permSections().map(([k,m])=>{
+      const c = cur(k,m);
+      return `<tr><td style="font-weight:700;">${m.icon} ${esc(m.title)}</td>${PERM_ACTIONS.map(([a])=>
+        `<td style="text-align:center;"><input type="checkbox" data-k="${k}" data-a="${a}" ${c[a]?'checked':''}></td>`).join('')}
+        <td style="text-align:center;"><button class="icon-btn" data-rowall="${k}">الكل</button></td></tr>`;
+    }).join('') : '';
+    page.innerHTML = `
+      <div class="page-head"><h2>🔐 الصلاحيات</h2></div>
+      <div class="card" style="margin-bottom:14px;"><div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+        <select id="perm-team" style="${selStyle}"><option value="">— اختر الفريق —</option>
+          ${teamNames.map(t=>`<option value="${esc(t)}" ${t===team?'selected':''}>${esc(t)}</option>`).join('')}
+          ${hasNoTeam?`<option value="__none" ${team==='__none'?'selected':''}>بدون فريق</option>`:''}</select>
+        <select id="perm-emp" style="${selStyle}" ${team?'':'disabled'}><option value="">— اختر الموظف —</option>
+          ${list.map(e=>`<option value="${esc(e.id)}" ${emp&&e.id===emp.id?'selected':''}>${esc(e.name)}</option>`).join('')}</select>
+      </div></div>
+      ${emp ? `<div class="card">
+        <div class="assumption-note">${rec?'تم تخصيص صلاحيات هذا الموظف.':'لم تُخصَّص صلاحيات لهذا الموظف بعد — المعروض هو صلاحيات دوره الحالية (' + esc(emp.department||'غير محدد') + ').'}
+        صلاحية التعديل والحذف تنطبق على كل السجلات اللي بيشوفها الموظف في القسم.</div>
+        <div class="table-wrap"><table><thead><tr><th>القسم</th>${PERM_ACTIONS.map(([,l])=>`<th>${l}</th>`).join('')}<th></th></tr></thead><tbody>${rows}</tbody></table></div>
+        <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;">
+          <button class="btn-primary btn-gold" id="perm-save" style="width:auto;padding:10px 24px;">💾 حفظ الصلاحيات</button>
+          ${rec?`<button class="icon-btn del" id="perm-reset">↩️ رجوع لصلاحيات الدور</button>`:''}
+        </div></div>`
+      : `<div class="empty-state"><div class="big">🔐</div>اختر الفريق ثم الموظف لعرض الصلاحيات.</div>`}`;
+    document.getElementById('perm-team').addEventListener('change', e=>{ state.permTeam=e.target.value; state.permEmp=''; renderPermissionsSection(page); });
+    document.getElementById('perm-emp').addEventListener('change', e=>{ state.permEmp=e.target.value; renderPermissionsSection(page); });
+    if(!emp) return;
+    const boxes = [...page.querySelectorAll('input[data-k]')];
+    boxes.forEach(b=>b.addEventListener('change', ()=>{
+      const row = boxes.filter(x=>x.dataset.k===b.dataset.k);
+      const view = row.find(x=>x.dataset.a==='view');
+      if(b.dataset.a!=='view' && b.checked) view.checked = true;
+      if(b.dataset.a==='view' && !b.checked) row.forEach(x=>x.checked=false);
+    }));
+    page.querySelectorAll('[data-rowall]').forEach(b=>b.addEventListener('click', ()=>{
+      const row = boxes.filter(x=>x.dataset.k===b.dataset.rowall);
+      const all = row.every(x=>x.checked); row.forEach(x=>x.checked=!all);
+    }));
+    document.getElementById('perm-save').addEventListener('click', async ()=>{
+      const map = {};
+      boxes.forEach(b=>{ (map[b.dataset.k] = map[b.dataset.k]||{})[b.dataset.a] = b.checked; });
+      await apiAdd('user_permissions', {
+        id:'perm_'+emp.id, employeeId:emp.id, employeeName:emp.name, username:emp.username||'', team:normTeam(emp.team),
+        perms:JSON.stringify(map), updatedAt:new Date().toISOString(), updatedBy:state.user.name||''
+      });
+      showToast('تم حفظ صلاحيات '+emp.name,'ok'); renderPermissionsSection(page);
+    });
+    const rs = document.getElementById('perm-reset');
+    if(rs) rs.addEventListener('click', async ()=>{
+      if(!confirm('رجوع '+emp.name+' لصلاحيات دوره الأصلية؟')) return;
+      await apiDelete('user_permissions', rec.id); renderPermissionsSection(page);
+    });
+  }
 
   /* ---------------- قسم "التعديلات": مدير النظام يرى الكل، ورئيس الفريق يرى فريقه، وغيرهم لا يرون شيئًا ---------------- */
   async function renderEditLogsSection(page){
@@ -1782,7 +1875,7 @@
   /* ---------------- قسم "الفرق": كروت قابلة للضغط تعرض بيانات الفريق وأعضاءه ---------------- */
   async function renderTeamsSection(page){
     const mod = MODULES.teams;
-    if(!mod.roles.includes(state.user.role)) return;
+    if(!canViewModule('teams')) return;
     await getDataMany(['teams','employees']);
     const teams = (await getData('teams')).slice().sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'ar'));
     const employees = await getData('employees');
@@ -3341,7 +3434,7 @@
   async function renderModule(page, key, options){
     options = options || {};
     const mod = MODULES[key];
-    if(!mod || !mod.roles.includes(state.user.role)) return;
+    if(!mod || !canViewModule(key)) return;
     const linkRefs = mod.fields.filter(f=>f.type==='linkSelect').map(f=>f.ref);
     const extraRefs = key==='subscriptions' ? ['indoor_leads','trip_hotels'] : [];
     await getDataMany([key, ...((isPRUser()||key==='visits')?['employees']:[]), ...linkRefs, ...extraRefs]);
@@ -3425,11 +3518,12 @@
     const searchTerm = state.moduleSearch[key] || '';
     // بنحدد الحالة دي بدقة عشان أي دور تاني (PR، أدمن، إلخ) يفضل شغال بالظبط
     // زي ما كان قبل كده من غير أي تغيير في زرار الإضافة بتاعه على أي موديول.
-    const canWriteModule = !(['accommodation','accounting'].includes(state.user.role) && key==='subscriptions');
+    const ovAdd=hasPerm(key,'add'), ovEdit=hasPerm(key,'edit'), ovDel=hasPerm(key,'delete');
+    const canWriteModule = (ovEdit!==null || ovDel!==null) ? (!!ovEdit || !!ovDel) : !(['accommodation','accounting'].includes(state.user.role) && key==='subscriptions');
     const canAssignTrip = key==='subscriptions' && state.user.role==='accommodation' && !options.noAssign;
     // الاشتراك بيتضاف تلقائيًا بس لما حالة المهتم تتغيّر لـ"مشترك" — مفيش زرار
     // إضافة يدوي في هذا القسم حتى لو المستخدم عنده صلاحية كتابة على الموديول.
-    const canAddNew = canWriteModule && key!=='subscriptions';
+    const canAddNew = (ovAdd!==null ? ovAdd : canWriteModule) && key!=='subscriptions';
     const rowDetail = !!options.rowDetail;
 
     // فلترة الأعمدة: بنستبعد أي حقل اتفرض من forcedFilter (زي النوع جوه بوابة
@@ -3474,7 +3568,7 @@
       container.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click', async (e)=>{
         e.stopPropagation();
         const row=visibleData.find(r=>String(r.id)===String(b.dataset.del));
-        if(!prCanEditRow(key,row)){ alert('ليس لديك صلاحية لحذف هذه البيانات'); return; }
+        if(!prCanDelete(key,row)){ alert('ليس لديك صلاحية لحذف هذه البيانات'); return; }
         if(!confirm('تأكيد الحذف؟')) return;
         await apiDelete(key,b.dataset.del);
         if(key==='subscriptions'){
@@ -3717,8 +3811,9 @@
     if(canWrite===undefined) canWrite=true; // القيمة الافتراضية بتحافظ على السلوك القديم لأي نداء تاني للدالة دي
     return `<tr${clickable? ` class="row-clickable" data-viewrow="${esc(row.id)}"` : ''}>${mod.fields.map(f=>`<td>${fieldDisplay(f,row[f.key],linkMaps,row)}</td>`).join('')}
       <td style="white-space:nowrap;">
-        ${canWrite ? `<button class="icon-btn" data-edit="${row.id}">✏️</button>
-        <button class="icon-btn del" data-del="${row.id}">🗑️</button>` : ''}
+        ${(()=>{ const k=Object.keys(MODULES).find(x=>MODULES[x]===mod); const pe=hasPerm(k,'edit'), pd=hasPerm(k,'delete');
+          return (canWrite && pe!==false ? `<button class="icon-btn" data-edit="${row.id}">✏️</button>` : '')
+               + (canWrite && pd!==false ? `<button class="icon-btn del" data-del="${row.id}">🗑️</button>` : ''); })()}
       </td></tr>`;
   }
 
