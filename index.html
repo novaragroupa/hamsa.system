@@ -601,11 +601,18 @@
     widgets: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','callcenter','accommodation','system','analyst'],
     accounting: ['admin'],
     user_permissions: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','callcenter','accommodation','system','analyst','accounting','reception'],
-    app_settings: ['admin','pr_in','accommodation','system']
+    app_settings: ['admin','pr_in','accommodation','system'],
+    edit_logs: ['admin','pr_leader']
   };
   function canReadTable(t){
     const role = state.user && state.user.role;
-    return !!role && Array.isArray(TABLE_READ_ROLES[t]) && TABLE_READ_ROLES[t].includes(role);
+    if(!role) return false;
+    if(Array.isArray(TABLE_READ_ROLES[t]) && TABLE_READ_ROLES[t].includes(role)) return true;
+    // تخصيص من صفحة الصلاحيات (عرض) لقسم الدور مش بيقرأه افتراضيًا
+    try{
+      const mk = ['trips','trip_hotels','accom_hotels','accom_rooms','accom_guests'].includes(t) ? 'trips_hub' : t;
+      return typeof hasPerm==='function' && hasPerm(mk,'view')===true;
+    }catch(_){ return false; }
   }
   function tablesReadableByRole(role){
     return Object.keys(TABLE_READ_ROLES).filter(t=>TABLE_READ_ROLES[t].includes(role));
@@ -1570,7 +1577,7 @@
   const PERM_HIDDEN = ['companies','callcenter_payments','indoor_data'];
   function permSections(){ return Object.entries(MODULES).filter(([k])=>!PERM_HIDDEN.includes(k)); }
   function permRecordFor(emp){ return emp ? (cache.user_permissions||[]).find(r=>String(r.employeeId)===String(emp.id)) || null : null; }
-  function permMap(rec){ try{ return JSON.parse((rec&&rec.perms)||'{}')||{}; }catch(e){ return {}; } }
+  function permMap(rec){ const v=rec&&rec.perms; if(v&&typeof v==='object') return v; try{ return JSON.parse(v||'{}')||{}; }catch(e){ return {}; } }
   // null = مفيش تخصيص لهذا القسم → نرجع لصلاحية الدور
   function hasPerm(key, action){
     if(!state.user || state.user.role==='admin') return null;
@@ -1731,7 +1738,8 @@
     const cur = (k,m)=>{
       if(saved[k]) return saved[k];
       const v = m.roles.includes(rk);
-      return {view:v, add:v&&k!=='subscriptions', edit:v, delete:v};
+      const viewOnly = k==='subscriptions' && ['accommodation','accounting'].includes(rk);
+      return {view:v, add:v&&k!=='subscriptions', edit:v&&!viewOnly, delete:v&&!viewOnly};
     };
     const selStyle = 'padding:10px 12px;border:1px solid var(--line);border-radius:10px;min-width:220px;font-family:inherit;';
     const rows = emp ? permSections().map(([k,m])=>{
@@ -1810,7 +1818,7 @@
       return `<span dir="ltr">${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}</span>`; };
     const actCls = {'إضافة':'green','تعديل':'blue','حذف':'red'};
     const changesHtml = r=>{
-      let arr=[]; try{ arr=JSON.parse(r.changes||'[]'); }catch(_){}
+      let arr=[]; if(Array.isArray(r.changes)) arr=r.changes; else { try{ arr=JSON.parse(r.changes||'[]'); }catch(_){} }
       if(!Array.isArray(arr) || !arr.length) return '—';
       return arr.map(c=> r.action==='تعديل'
         ? `<div><b>${esc(c.k)}:</b> <span style="color:var(--danger)">${esc(c.f||'—')}</span> ← <span style="color:var(--success)">${esc(c.t||'—')}</span></div>`
@@ -1831,7 +1839,7 @@
       const q = document.getElementById('el-search').value.trim().toLowerCase();
       const u = document.getElementById('el-user').value, t = document.getElementById('el-table').value, a = document.getElementById('el-action').value;
       const list = rows.filter(r=>(!u||r.user===u)&&(!t||r.tableLabel===t)&&(!a||r.action===a)
-        &&(!q || [r.user,r.team,r.tableLabel,r.action,r.recordLabel,r.changes].join(' ').toLowerCase().includes(q)));
+        &&(!q || [r.user,r.team,r.tableLabel,r.action,r.recordLabel,typeof r.changes==='string'?r.changes:JSON.stringify(r.changes||'')].join(' ').toLowerCase().includes(q)));
       const shown = list.slice(0,500);
       document.getElementById('el-wrap').innerHTML = shown.length
         ? `<div class="table-wrap"><table><thead><tr><th>التاريخ والوقت</th><th>الموظف</th><th>الفريق</th><th>القسم</th><th>العملية</th><th>السجل</th><th>التفاصيل</th></tr></thead><tbody>${shown.map(r=>`<tr>
