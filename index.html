@@ -1308,6 +1308,12 @@
   // غلط في شيت الموظفين ما تكسرش مقارنة الفريق. نفس الدالة موجودة في السيرفر
   // (Apps Script) عشان مقارنة الفريق تبقى متطابقة تمامًا بين الواجهة والسيرفر.
   function normTeam(v){ return String(v||'').trim(); }
+  // طبّع الاسم للمقارنة (نفس normName في Code.gs): يشيل التشكيل، يوحّد الألف والياء، ويدمج المسافات.
+  function normName(v){
+    return String(v||'').replace(/[\u064B-\u065F\u0670\u0640]/g,'').replace(/[\u0622\u0623\u0625]/g,'\u0627')
+      .replace(/\u0649/g,'\u064A').replace(/[\u00A0\s]+/g,' ').trim().toLowerCase();
+  }
+  function sameName(a,b){ const x=normName(a); return !!x && x===normName(b); }
   function currentEmployee(){
     if(!state.user) return null;
     const list = cache.employees || [];
@@ -1331,7 +1337,8 @@
   }
   async function prAllowedNames(){
     const members=await prTeamMembers();
-    return new Set(members.map(e=>e.name).filter(Boolean));
+    const s=new Set(members.map(e=>normName(e.name)).filter(Boolean));
+    return { has:v=>s.has(normName(v)), get size(){ return s.size; } };
   }
   async function filterPRData(key,data){
     if(!isPRUser()) return data;
@@ -1345,10 +1352,10 @@
       return data.filter(r=>normTeam(r.name)===team);
     }
     if(key==='indoor_leads' || key==='indoor_data' || key==='subscriptions'){
-      return data.filter(r=>teamNames.has(r.responsiblePerson) && (state.user.role==='pr_leader' || r.responsiblePerson===myName));
+      return data.filter(r=>teamNames.has(r.responsiblePerson) && (state.user.role==='pr_leader' || sameName(r.responsiblePerson,myName)));
     }
     if(key==='pr_member_data'){
-      return data.filter(r=>teamNames.has(r.memberId) && (state.user.role==='pr_leader' || r.memberId===myName));
+      return data.filter(r=>teamNames.has(r.memberId) && (state.user.role==='pr_leader' || sameName(r.memberId,myName)));
     }
     return data;
   }
@@ -1366,9 +1373,9 @@
       if(key==='pr_member_data') return true;
       return false;
     }
-    if(key==='indoor_leads' || key==='indoor_data' || key==='subscriptions') return !row?.id || row.responsiblePerson===myName;
-    if(key==='pr_member_data') return !row?.id || row.memberId===myName;
-    return key==='employees' && row?.name===myName;
+    if(key==='indoor_leads' || key==='indoor_data' || key==='subscriptions') return !row?.id || sameName(row.responsiblePerson,myName);
+    if(key==='pr_member_data') return !row?.id || sameName(row.memberId,myName);
+    return key==='employees' && sameName(row?.name,myName);
   }
 
   // "قائد الفريق" هو الحقل leader الموجود في جدول teams نفسه
@@ -2062,10 +2069,10 @@
     if(state.user.role==='pr_member'){
       const me=await currentEmployeeFresh();
       const my=me?.name||state.user.name;
-      const mine=members.find(m=>m.name===my) || me || {name:my,team:await prTeamName()};
-      const myLeads=leads.filter(x=>x.responsiblePerson===my);
-      const myData=dataRows.filter(x=>x.memberId===my);
-      const mySubs=subs.filter(x=>x.responsiblePerson===my);
+      const mine=members.find(m=>sameName(m.name,my)) || me || {name:my,team:await prTeamName()};
+      const myLeads=leads.filter(x=>sameName(x.responsiblePerson,my));
+      const myData=dataRows.filter(x=>sameName(x.memberId,my));
+      const mySubs=subs.filter(x=>sameName(x.responsiblePerson,my));
       page.innerHTML=`
         <div class="page-head"><h2>👤 بياناتي في العلاقات العامة</h2></div>
         <div class="card">
@@ -2103,9 +2110,9 @@
       const tm=members.filter(m=>m.team===team);
       const panel=document.getElementById('pr-members-panel');
       panel.innerHTML=`<h3>👥 أعضاء ${esc(team)}</h3><div class="member-grid">${tm.map(m=>{
-        const ml=leads.filter(x=>x.responsiblePerson===m.name);
-        const md=dataRows.filter(x=>x.memberId===m.name);
-        const ms=subs.filter(x=>x.responsiblePerson===m.name);
+        const ml=leads.filter(x=>sameName(x.responsiblePerson,m.name));
+        const md=dataRows.filter(x=>sameName(x.memberId,m.name));
+        const ms=subs.filter(x=>sameName(x.responsiblePerson,m.name));
         return `<div class="member-card" data-member="${esc(m.name)}">
           <div class="member-name">${esc(m.name)}</div><div class="member-role">${esc(ROLE_LABELS[m.department]||m.department||'عضو فريق')}</div>
           <div class="member-stats"><div class="member-stat"><b>${ml.filter(x=>x.type==='مهتم' && x.status!=='مشترك').length}</b><span>مهتمون</span></div>
@@ -2116,10 +2123,10 @@
       panel.querySelectorAll('[data-member]').forEach(c=>c.addEventListener('click',()=>showMember(c.dataset.member)));
     };
     const showMember=(name)=>{
-      const m=members.find(x=>x.name===name);
-      const ml=leads.filter(x=>x.responsiblePerson===name);
-      const md=dataRows.filter(x=>x.memberId===name);
-      const ms=subs.filter(x=>x.responsiblePerson===name);
+      const m=members.find(x=>sameName(x.name,name));
+      const ml=leads.filter(x=>sameName(x.responsiblePerson,name));
+      const md=dataRows.filter(x=>sameName(x.memberId,name));
+      const ms=subs.filter(x=>sameName(x.responsiblePerson,name));
       const panel=document.getElementById('pr-members-panel');
       panel.innerHTML=`<button class="icon-btn" id="back-members">→ رجوع للأعضاء</button>
         <div class="card" style="margin-top:10px"><h3>👤 ${esc(name)}</h3>
