@@ -430,10 +430,9 @@
         {key:'name', label:'الاسم', type:'text', required:true},
         {key:'code', label:'كود العميل', type:'readonly'},
         {key:'phone', label:'رقم الهاتف', type:'text'},
-        {key:'nationalId', label:'الرقم القومي', type:'text', starWhenSubscribed:true},
+        {key:'nationalId', label:'الرقم القومي', type:'text', showWhenSubscribed:true},
         {key:'registrationDate', label:'تاريخ التسجيل', type:'date', required:true},
         {key:'type', label:'النوع', type:'select', options:['مهتم','مندوب']},
-        {key:'repStatus', label:'حالة المندوب', type:'select', options:['فعال','غير فعال']},
         {key:'company', label:'الشركة', type:'dynamicSelect', ref:'visits', refField:'companyName'},
         {key:'status', label:'الحالة', type:'select', options:['جديد','تم التواصل','تحويل لحجز','مشترك']},
         {key:'gender', label:'جنس العميل', type:'select', options:['ذكر','أنثى'], showWhenSubscribed:true},
@@ -970,7 +969,7 @@
 
   async function flushSyncQueue(maxMs){
     const end = Date.now()+maxMs;
-    while((syncQ.length || syncRunning) && Date.now()<end && !syncPaused) await sleep(150);
+    while((syncQ.length || syncRunning || logQ.length || logRunning) && Date.now()<end && !syncPaused) await sleep(150);
   }
 
   // بيتنادى مع أي خروج/انتهاء جلسة: بيمسح الكاش كله (عشان مستخدم تاني مايشوفش بيانات
@@ -978,7 +977,7 @@
   function resetDataLayer(){
     dataGen++;
     if(syncQ.length && lastUsername) orphanJobs = {user:lastUsername, jobs:syncQ.slice()};
-    syncQ.length = 0; jobLog.length = 0;
+    syncQ.length = 0; jobLog.length = 0; logQ.length = 0;
     touched.clear(); stale.clear(); resync.clear();
     Object.keys(cache).forEach(k=>delete cache[k]);
     Object.keys(cacheTime).forEach(k=>delete cacheTime[k]);
@@ -1031,7 +1030,7 @@
   }
 
   window.addEventListener('beforeunload', e=>{
-    if(syncQ.length || syncRunning){ e.preventDefault(); e.returnValue=''; return ''; }
+    if(syncQ.length || syncRunning || logQ.length){ e.preventDefault(); e.returnValue=''; return ''; }
   });
   window.addEventListener('online', ()=>{ if(syncQ.length) pumpSync(); if(state.user) refreshAll(); });
   document.addEventListener('visibilitychange', ()=>{
@@ -1044,6 +1043,61 @@
   }, 30000);
 
   /* ---------------- عمليات البيانات (فورية + مزامنة في الخلفية) ---------------- */
+
+  /* ---------------- سجل التعديلات (قسم "التعديلات") ---------------- */
+  const LOG_SKIP = new Set(['edit_logs','app_settings','dashboards','widgets']);
+  const logQ = []; let logRunning = false;
+  function logFieldLabel(table,key){ const m=MODULES[table]; const f=m&&m.fields&&m.fields.find(x=>x.key===key); return f?f.label:key; }
+  function logVal(v){
+    if(v===null||v===undefined) return '';
+    let x = typeof v==='object' ? JSON.stringify(v) : String(v); x = x.trim();
+    if(/^data:/.test(x)) return '[صورة]';
+    return x.length>160 ? x.slice(0,160)+'…' : x;
+  }
+  function logRecLabel(r){ return String(r.name||r.customerName||r.clientName||r.companyName||r.label||r.title||r.code||r.id||''); }
+  function logEdit(action, table, rec, old, batchCount){
+    try{
+      if(LOG_SKIP.has(table) || !state.user || !rec) return;
+      let changes = [];
+      const keys = Object.keys(rec).filter(k=>k!=='id');
+      if(action==='تعديل'){
+        keys.forEach(k=>{ if(normVal(old&&old[k])!==normVal(rec[k])) changes.push({k:logFieldLabel(table,k), f:logVal(old&&old[k]), t:logVal(rec[k])}); });
+        if(!changes.length) return;
+      } else if(action==='إضافة' && !batchCount){
+        keys.forEach(k=>{ const v=logVal(rec[k]); if(v!=='') changes.push({k:logFieldLabel(table,k), t:v}); });
+        changes = changes.slice(0,15);
+      }
+      const emp = currentEmployee();
+      const merged = {...(old||{}), ...rec};
+      const entry = {
+        id:uid(), at:new Date().toISOString(),
+        user:state.user.name||'', username:state.user.username||'', role:state.user.role||'',
+        team:normTeam((emp&&emp.team)||state.user.team||''),
+        table, tableLabel:(MODULES[table]&&MODULES[table].title)||table, action,
+        recordId:String(rec.id||''),
+        recordLabel: batchCount ? (batchCount+' سجل') : logRecLabel(merged),
+        changes: JSON.stringify(changes)
+      };
+      cacheUpsertLocal('edit_logs', entry);
+      logQ.push(entry); pumpLogs();
+    }catch(e){ console.warn('edit log error', e); }
+  }
+  async function pumpLogs(){
+    if(logRunning) return; logRunning = true;
+    try{
+      while(logQ.length && state.user){
+        while((syncQ.length || syncRunning) && state.user) await sleep(300);
+        const e = logQ[0]; let ok = false;
+        for(let i=0;i<3 && !ok;i++){
+          try{ await sheetRequest('upsert','edit_logs',e); ok = true; }
+          catch(err){ if(err && err.auth) return; if(err && err.serverRejected) break; await sleep(800*(i+1)); }
+        }
+        if(!ok) console.warn('edit log not saved', e.id);
+        logQ.shift();
+      }
+    } finally { logRunning = false; }
+  }
+
   const recentAdds = new Map();
   async function apiAdd(table, record){
     if(!record.id) record.id=uid();
@@ -1054,6 +1108,8 @@
     if(prev && Date.now()-prev.t<1200) return prev.rec;
     recentAdds.set(sig, {t:Date.now(), rec:record});
     if(recentAdds.size>60){ const now=Date.now(); recentAdds.forEach((v,k)=>{ if(now-v.t>5000) recentAdds.delete(k); }); }
+    const old0 = (cache[table]||[]).find(r=>String(r.id)===String(record.id));
+    logEdit(old0?'تعديل':'إضافة', table, record, old0);
     cacheUpsertLocal(table, record);
     enqueueWrite('upsert', table, clone(record));
     if(table==='subscriptions') stale.add('accom_guests');
@@ -1061,12 +1117,14 @@
   }
 
   async function apiUpdate(table, record){
+    logEdit('تعديل', table, record, (cache[table]||[]).find(r=>String(r.id)===String(record.id)));
     cacheUpsertLocal(table, record);
     enqueueWrite('upsert', table, clone(record));
     if(table==='subscriptions') stale.add('accom_guests');
   }
 
   async function apiDelete(table, id){
+    { const o=(cache[table]||[]).find(r=>String(r.id)===String(id)); logEdit('حذف', table, {...(o||{}), id}, o); }
     cacheDeleteLocal(table, id);
     enqueueWrite('delete', table, {id});
     if(table==='subscriptions') stale.add('accom_guests');
@@ -1075,6 +1133,7 @@
   async function apiDeleteMany(table, ids){
     ids = (ids||[]).filter(Boolean);
     if(!ids.length) return;
+    logEdit('حذف', table, {id:'batch'}, null, ids.length);
     ids.forEach(id=>cacheDeleteLocal(table,id));
     chunkArray(ids, 500).forEach(c=>enqueueWrite('batchDelete', table, {ids:c}));
     if(table==='subscriptions') stale.add('accom_guests');
@@ -1084,6 +1143,7 @@
     records = (records||[]).filter(Boolean);
     if(!records.length) return records;
     records.forEach(r=>{ if(!r.id) r.id=uid(); });
+    logEdit('إضافة', table, {id:'batch'}, null, records.length);
     records.forEach(r=>cacheUpsertLocal(table,r));
     chunkArray(records, 500).forEach(c=>enqueueWrite('batchUpsert', table, {rows:clone(c)}));
     if(table==='subscriptions') stale.add('accom_guests');
@@ -1557,6 +1617,9 @@
       const g = MODULE_GROUP_OF[k] || 'ops';
       groups[g].push(`<button class="nav-item ${state.view===k?'active':''}" data-view="${k}">${m.icon}<span>${esc(m.title)}</span></button>`);
     });
+    if(['admin','pr_leader'].includes(state.user.role)){
+      groups.admin.push(`<button class="nav-item ${state.view==='edit_logs'?'active':''}" data-view="edit_logs">📝<span>التعديلات</span></button>`);
+    }
     // "الاشتراكات الملغاة" مش موديول مستقل في MODULES — هي نفس بيانات
     // الاشتراكات بس مفلترة على حالة "ملغي"، فبتظهر لنفس اللي أصلًا يقدر
     // يشوف "الاشتراكات".
@@ -1618,6 +1681,7 @@
     }
     if(state.view==='dashboard') await renderDashboard(page, mods);
     else if(state.view==='pr_teams') await renderPRHierarchy(page);
+    else if(state.view==='edit_logs') await renderEditLogsSection(page);
     else if(state.view==='teams') await renderTeamsSection(page);
     else if(state.view==='analytics') await renderAnalytics(page, analyticsAccessibleModules());
     else if(state.view==='accommodation') await renderAccommodationSection(page);
@@ -1628,6 +1692,64 @@
     else if(state.view==='subscriptions') await renderSubscriptionsSection(page, false);
     else if(state.view==='cancelled_subscriptions') await renderSubscriptionsSection(page, true);
     else if(MODULES[state.view]) await renderModule(page, state.view);
+  }
+
+
+  /* ---------------- قسم "التعديلات": مدير النظام يرى الكل، ورئيس الفريق يرى فريقه، وغيرهم لا يرون شيئًا ---------------- */
+  async function renderEditLogsSection(page){
+    const role = state.user.role;
+    if(!['admin','pr_leader'].includes(role)){
+      page.innerHTML = `<div class="page-head"><h2>📝 التعديلات</h2></div><div class="empty-state"><div class="big">🔒</div>هذا القسم متاح لمدير النظام ورؤساء الفرق فقط.</div>`;
+      return;
+    }
+    if(!cacheTime.edit_logs || Date.now()-cacheTime.edit_logs>15000) cache.edit_logs = null;
+    let rows = (await getData('edit_logs')).slice();
+    logQ.forEach(e=>{ if(!rows.some(r=>r.id===e.id)) rows.push(e); });
+    if(role==='pr_leader'){
+      const team = await prTeamName();
+      const names = await prAllowedNames();
+      rows = rows.filter(r=> (team && normTeam(r.team)===team) || names.has(r.user));
+    }
+    rows.sort((a,b)=>String(b.at).localeCompare(String(a.at)));
+    const uniq = k=>[...new Set(rows.map(r=>r[k]).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),'ar'));
+    const opts = (arr,label)=>`<option value="">${label}</option>`+arr.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');
+    const fmtDT = iso=>{ const d=new Date(iso); if(isNaN(d)) return esc(iso||''); const p=n=>String(n).padStart(2,'0');
+      return `<span dir="ltr">${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}</span>`; };
+    const actCls = {'إضافة':'green','تعديل':'blue','حذف':'red'};
+    const changesHtml = r=>{
+      let arr=[]; try{ arr=JSON.parse(r.changes||'[]'); }catch(_){}
+      if(!Array.isArray(arr) || !arr.length) return '—';
+      return arr.map(c=> r.action==='تعديل'
+        ? `<div><b>${esc(c.k)}:</b> <span style="color:var(--danger)">${esc(c.f||'—')}</span> ← <span style="color:var(--success)">${esc(c.t||'—')}</span></div>`
+        : `<div><b>${esc(c.k)}:</b> ${esc(c.t||'—')}</div>`).join('');
+    };
+    const sel = 'padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;background:var(--sand-50);';
+    page.innerHTML = `
+      <div class="page-head"><h2>📝 التعديلات</h2><button class="icon-btn" id="el-refresh" style="background:var(--sand-100);">🔄 تحديث</button></div>
+      ${role==='pr_leader' ? `<div class="assumption-note">بتظهر لك هنا تعديلات أعضاء فريقك فقط.</div>` : ''}
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+        <input type="text" id="el-search" placeholder="🔍 ابحث في التعديلات..." style="flex:1;min-width:200px;${sel}"/>
+        <select id="el-user" style="${sel}">${opts(uniq('user'),'كل الموظفين')}</select>
+        <select id="el-table" style="${sel}">${opts(uniq('tableLabel'),'كل الأقسام')}</select>
+        <select id="el-action" style="${sel}">${opts(['إضافة','تعديل','حذف'],'كل العمليات')}</select>
+      </div>
+      <div class="card"><div id="el-wrap"></div></div>`;
+    const draw = ()=>{
+      const q = document.getElementById('el-search').value.trim().toLowerCase();
+      const u = document.getElementById('el-user').value, t = document.getElementById('el-table').value, a = document.getElementById('el-action').value;
+      const list = rows.filter(r=>(!u||r.user===u)&&(!t||r.tableLabel===t)&&(!a||r.action===a)
+        &&(!q || [r.user,r.team,r.tableLabel,r.action,r.recordLabel,r.changes].join(' ').toLowerCase().includes(q)));
+      const shown = list.slice(0,500);
+      document.getElementById('el-wrap').innerHTML = shown.length
+        ? `<div class="table-wrap"><table><thead><tr><th>التاريخ والوقت</th><th>الموظف</th><th>الفريق</th><th>القسم</th><th>العملية</th><th>السجل</th><th>التفاصيل</th></tr></thead><tbody>${shown.map(r=>`<tr>
+            <td style="white-space:nowrap;">${fmtDT(r.at)}</td><td>${esc(r.user)}</td><td>${esc(r.team||'—')}</td><td>${esc(r.tableLabel)}</td>
+            <td><span class="badge ${actCls[r.action]||'gray'}">${esc(r.action)}</span></td><td>${esc(r.recordLabel||'—')}</td><td>${changesHtml(r)}</td></tr>`).join('')}</tbody></table></div>
+          ${list.length>shown.length?`<div class="assumption-note">معروض أحدث ${shown.length} من ${list.length} — استخدم البحث أو الفلاتر لتضييق النتائج.</div>`:''}`
+        : `<div class="empty-state"><div class="big">📭</div>لا توجد تعديلات مسجّلة</div>`;
+    };
+    draw();
+    ['el-search','el-user','el-table','el-action'].forEach(id=>document.getElementById(id).addEventListener(id==='el-search'?'input':'change', draw));
+    document.getElementById('el-refresh').addEventListener('click', ()=>{ cache.edit_logs=null; render(); });
   }
 
   async function renderSubscriptionsSection(page, cancelledOnly){
