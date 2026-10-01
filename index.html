@@ -1081,13 +1081,21 @@
       const fmtDT = iso=>{ const d=new Date(iso); if(isNaN(d)) return esc(iso||''); const p=n=>String(n).padStart(2,'0');
         return `<span dir="ltr">${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}</span>`; };
       const cls = {'إضافة':'green','تعديل':'blue','حذف':'red'};
-      const lines = r=>{ let a=[]; try{ a=JSON.parse(r.changes||'[]'); }catch(_){}
-        if(!Array.isArray(a)||!a.length) return '';
+      // السيرفر بيرجّع الأعمدة اللي شكلها JSON ككائن/مصفوفة جاهزة، فبنقبل الشكلين (نص أو مصفوفة).
+      const parseChanges = r=>{ let a=r.changes;
+        if(typeof a==='string'){ try{ a=JSON.parse(a||'[]'); }catch(_){ a=[]; } }
+        return Array.isArray(a) ? a.filter(c=>c && typeof c==='object') : []; };
+      const lines = r=>{
+        const a = parseChanges(r);
+        if(!a.length) return r.action==='تعديل' ? `<div class="assumption-note" style="margin-top:8px;">تم التعديل، لكن لم تُسجَّل تفاصيل الحقول لهذه العملية.</div>` : '';
+        const names = a.map(c=>esc(c.k)).join('، ');
         const h = a.map(c=> r.action==='تعديل'
-          ? `<div><b>${esc(c.k)}:</b> <span style="color:var(--danger)">${esc(c.f||'—')}</span> ← <span style="color:var(--success)">${esc(c.t||'—')}</span></div>`
+          ? `<div style="padding:4px 0;border-top:1px dashed var(--line);"><b>${esc(c.k)}</b><br><span style="color:var(--danger);">قبل: ${esc(c.f||'—')}</span><br><span style="color:var(--success);">بعد: ${esc(c.t||'—')}</span></div>`
           : `<div><b>${esc(c.k)}:</b> ${esc(c.t||'—')}</div>`).join('');
-        return r.action==='تعديل' ? `<div style="margin-top:8px;font-size:13px;">${h}</div>`
+        return r.action==='تعديل'
+          ? `<div style="margin-top:8px;font-size:13px;"><div style="margin-bottom:4px;">عدّل: <b>${names}</b></div>${h}</div>`
           : `<details style="margin-top:8px;font-size:13px;"><summary style="cursor:pointer;">عرض البيانات</summary>${h}</details>`; };
+
       const lastEdit = rows.find(r=>r.action==='تعديل');
       body.innerHTML = `<div style="margin-bottom:12px;font-weight:700;">${edits ? `✅ تم التعديل ${edits} ${edits===1?'مرة':'مرات'}` : '⚪ لم يتم تعديل هذا السجل'}
           ${lastEdit ? `<div style="font-weight:400;font-size:13px;color:var(--muted);margin-top:4px;">آخر تعديل: <b style="color:inherit;">${esc(lastEdit.user||'—')}</b> · ${fmtDT(lastEdit.at)}</div>` : ''}</div>`
@@ -1096,7 +1104,8 @@
               <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center;">
                 <span><span class="badge ${cls[r.action]||'gray'}">${esc(r.action)}</span> <b>${esc(r.user||'—')}</b>${r.team?` <span style="color:var(--muted);">(${esc(r.team)})</span>`:''}</span>
                 <span style="color:var(--muted);font-size:12.5px;">${fmtDT(r.at)}</span>
-              </div>${lines(r)}</div>`).join('')}</div>`
+              </div>
+              <div style="font-size:12.5px;color:var(--muted);margin-top:4px;">القسم: <b>${esc(r.tableLabel||tableTitle(r.table))}</b>${r.recordLabel?` · السجل: <b>${esc(r.recordLabel)}</b>`:''}</div>${lines(r)}</div>`).join('')}</div>`
           : `<div class="assumption-note">لا يوجد سجل تعديلات لهذا العنصر (ممكن يكون اتعمل قبل تفعيل تسجيل التعديلات).</div>`);
     }catch(err){ body.innerHTML = `<div class="assumption-note">تعذّر تحميل ملخص التعديلات.</div>`; }
   }
