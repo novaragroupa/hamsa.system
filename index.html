@@ -943,7 +943,10 @@
           syncQ.splice(0, group.length);
           const silent = group.every(j=>/delete/i.test(j.action) && j.tries>1); // حذف اتنفّذ قبل كده
           console.error('sync rejected', first.table, action, lastErr);
-          if(!silent) showToast('تعذّر حفظ تعديل في "'+first.table+'": '+((lastErr&&lastErr.message)||'رفض من الخادم')+' — تم استرجاع آخر نسخة من الخادم', 'error');
+          if(!silent){
+            if(/Forbidden/i.test(String((lastErr&&lastErr.message)||''))) showDenied(/delete/i.test(first.action)?'delete':'save', null, {title:tableTitle(first.table)});
+            else showToast('تعذّر حفظ تعديل في "'+first.table+'": '+((lastErr&&lastErr.message)||'رفض من الخادم')+' — تم استرجاع آخر نسخة من الخادم', 'error');
+          }
           resync.add(first.table);
           updateSyncStatus();
           continue;
@@ -1085,7 +1088,9 @@
           : `<div><b>${esc(c.k)}:</b> ${esc(c.t||'—')}</div>`).join('');
         return r.action==='تعديل' ? `<div style="margin-top:8px;font-size:13px;">${h}</div>`
           : `<details style="margin-top:8px;font-size:13px;"><summary style="cursor:pointer;">عرض البيانات</summary>${h}</details>`; };
-      body.innerHTML = `<div style="margin-bottom:12px;font-weight:700;">${edits ? `✅ تم التعديل ${edits} ${edits===1?'مرة':'مرات'}` : '⚪ لم يتم تعديل هذا السجل'}</div>`
+      const lastEdit = rows.find(r=>r.action==='تعديل');
+      body.innerHTML = `<div style="margin-bottom:12px;font-weight:700;">${edits ? `✅ تم التعديل ${edits} ${edits===1?'مرة':'مرات'}` : '⚪ لم يتم تعديل هذا السجل'}
+          ${lastEdit ? `<div style="font-weight:400;font-size:13px;color:var(--muted);margin-top:4px;">آخر تعديل: <b style="color:inherit;">${esc(lastEdit.user||'—')}</b> · ${fmtDT(lastEdit.at)}</div>` : ''}</div>`
         + (rows.length ? `<div style="max-height:60vh;overflow:auto;display:flex;flex-direction:column;gap:10px;">${rows.map(r=>`
             <div style="border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;">
               <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center;">
@@ -1104,14 +1109,60 @@
     }, true);
   }
 
-  const LOG_SKIP = new Set(['edit_logs','app_settings','dashboards','widgets','user_permissions']);
+  /* ---------------- رسالة "هذا ليس من صلاحياتك" ---------------- */
+  function tableTitle(t){
+    return (MODULES[t] && MODULES[t].title) || ({accom_guests:'التسكين', accom_hotels:'الفنادق', accom_rooms:'الغرف', trips:'الرحلات',
+      trip_hotels:'فنادق الرحلات', accounting:'كشف الحساب', users:'المستخدمين'}[t]) || 'هذا القسم';
+  }
+  // لموظفي العلاقات العامة: التعديل/الحذف محصور في السجلات المسؤول عنها (لو مفيش تخصيص من مدير النظام)
+  function ownHint(key, act){
+    try{ return hasPerm(key,act)===null && isPRUser() && !['pr_manager','pr_leader'].includes(state.user.role); }catch(_){ return false; }
+  }
+  function showDenied(action, key, opts){
+    opts = opts || {};
+    const title = opts.title || tableTitle(key);
+    const verbs = {view:'دخول قسم', add:'إضافة بيانات جديدة في قسم', edit:'تعديل البيانات في قسم', delete:'حذف البيانات من قسم', save:'حفظ تعديلك في قسم'};
+    document.querySelectorAll('.deny-modal').forEach(x=>x.remove());
+    const bg = document.createElement('div'); bg.className = 'modal-bg deny-modal';
+    bg.innerHTML = `<div class="modal" style="max-width:430px;text-align:center;">
+      <div style="font-size:48px;line-height:1;">🔒</div>
+      <h3 style="margin:12px 0 8px;">هذا الإجراء ليس من صلاحياتك</h3>
+      <p style="margin:0 0 8px;line-height:1.9;">عذرًا، ليس مسموحًا لك بـ <b>${verbs[action]||verbs.edit}</b> «${esc(title)}».</p>
+      ${opts.own ? `<div class="assumption-note" style="text-align:right;">ℹ️ تقدر تتعامل مع السجلات المسجّلة باسمك فقط، أما سجلات باقي الموظفين فهي للعرض.</div>` : ''}
+      ${action==='save' ? `<div class="assumption-note" style="text-align:right;">تم استرجاع آخر نسخة محفوظة، ولم يتم حفظ تعديلك.</div>` : ''}
+      <p style="font-size:12.5px;color:var(--muted);margin:10px 0 18px;">لو محتاج هذه الصلاحية، تواصل مع مدير النظام ليفعّلها لك من قسم «الصلاحيات».</p>
+      <div class="modal-actions"><button type="button" class="btn-primary" id="deny-ok">حسنًا، فهمت</button></div></div>`;
+    document.body.appendChild(bg);
+    const close = ()=>bg.remove();
+    bg.querySelector('#deny-ok').addEventListener('click', close);
+    bg.addEventListener('click', e=>{ if(e.target===bg) close(); });
+  }
+
+  const LOG_SKIP = new Set(['edit_logs','app_settings','dashboards','widgets','user_permissions','users','accom_guests']);
   const logQ = []; let logRunning = false;
   function logFieldLabel(table,key){ const m=MODULES[table]; const f=m&&m.fields&&m.fields.find(x=>x.key===key); return f?f.label:key; }
-  function logVal(v){
+  // أكواد الرحلة/الفندق/الغرفة بتتحوّل لأسماء مقروءة بدل الـ ID
+  function logResolve(table, key, v){
+    if(v===null||v===undefined||v==='') return v;
+    const mf = MODULES[table] && MODULES[table].fields && MODULES[table].fields.find(f=>f.key===key);
+    let ref = mf && mf.type==='linkSelect' ? mf.ref : null;
+    if(!ref){ if(/tripId$/i.test(key)) ref='trips'; else if(/hotelId$/i.test(key)) ref='accom_hotels'; else if(/roomId$/i.test(key)) ref='accom_rooms'; }
+    if(!ref) return v;
+    const r = (cache[ref]||[]).find(x=>String(x.id)===String(v)); if(!r) return v;
+    if(ref==='trips') return String(r.label||'رحلة') + (r.date ? ' — '+fmtDate(r.date) : '');
+    if(ref==='accom_hotels') return String(r.name||v);
+    if(ref==='accom_rooms') return 'غرفة '+String(r.roomNumber||v);
+    return v;
+  }
+  function logVal(v, table, key){
     if(v===null||v===undefined) return '';
-    let x = typeof v==='object' ? JSON.stringify(v) : String(v); x = x.trim();
+    v = logResolve(table, key, v);
+    let x;
+    if(Array.isArray(v)) x = v.map(i=> i && typeof i==='object' ? ([i.date,i.note].filter(Boolean).join(' — ') || JSON.stringify(i)) : String(i)).filter(Boolean).join(' | ');
+    else x = typeof v==='object' ? JSON.stringify(v) : String(v);
+    x = x.trim();
     if(/^data:/.test(x)) return '[صورة]';
-    return x.length>160 ? x.slice(0,160)+'…' : x;
+    return x.length>240 ? x.slice(0,240)+'…' : x;
   }
   function logRecLabel(r){ return String(r.name||r.customerName||r.clientName||r.companyName||r.label||r.title||r.code||r.id||''); }
   function logEdit(action, table, rec, old, batchCount){
@@ -1120,10 +1171,10 @@
       let changes = [];
       const keys = Object.keys(rec).filter(k=>k!=='id');
       if(action==='تعديل'){
-        keys.forEach(k=>{ if(normVal(old&&old[k])!==normVal(rec[k])) changes.push({k:logFieldLabel(table,k), f:logVal(old&&old[k]), t:logVal(rec[k])}); });
+        keys.forEach(k=>{ if(normVal(old&&old[k])!==normVal(rec[k])) changes.push({k:logFieldLabel(table,k), f:logVal(old&&old[k],table,k), t:logVal(rec[k],table,k)}); });
         if(!changes.length) return;
       } else if(action==='إضافة' && !batchCount){
-        keys.forEach(k=>{ const v=logVal(rec[k]); if(v!=='') changes.push({k:logFieldLabel(table,k), t:v}); });
+        keys.forEach(k=>{ const v=logVal(rec[k],table,k); if(v!=='') changes.push({k:logFieldLabel(table,k), t:v}); });
         changes = changes.slice(0,15);
       }
       const emp = currentEmployee();
@@ -1759,7 +1810,12 @@
     const page = document.getElementById('page');
     if(!page) return;
     const mods = accessibleModules();
-    if((MODULES[state.view] && !canViewModule(state.view)) || (state.view==='cancelled_subscriptions' && !canViewModule('subscriptions')) || (state.view==='permissions' && state.user.role!=='admin')){ state.view='dashboard'; updateActiveNav(); }
+    { const _gk = state.view==='cancelled_subscriptions' ? 'subscriptions' : state.view;
+      const _denyPerm = state.view==='permissions' && state.user.role!=='admin';
+      if((MODULES[_gk] && !canViewModule(_gk)) || _denyPerm){
+        state.view='dashboard'; updateActiveNav();
+        setTimeout(()=>showDenied('view', _denyPerm?null:_gk, _denyPerm?{title:'الصلاحيات'}:{}), 60);
+      } }
     if(['areas','ledger','companies','callcenter_payments','indoor_data'].includes(state.view)){
       state.view='dashboard'; updateActiveNav();
     }
@@ -1791,57 +1847,128 @@
     const list = !team ? [] : emps.filter(e=> team==='__none' ? !normTeam(e.team) : normTeam(e.team)===team);
     const emp = list.find(e=>String(e.id)===String(state.permEmp)) || null;
     const rec = permRecordFor(emp);
-    const saved = permMap(rec);
-    const rk = emp ? (Object.keys(ROLE_LABELS).find(k=>ROLE_LABELS[k]===emp.department)||'') : '';
-    const cur = (k,m)=>{
-      if(saved[k]) return saved[k];
-      const v = m.roles.includes(rk);
-      const viewOnly = k==='subscriptions' && ['accommodation','accounting'].includes(rk);
-      return {view:v, add:v&&k!=='subscriptions', edit:v&&!viewOnly, delete:v&&!viewOnly};
-    };
-    const selStyle = 'padding:10px 12px;border:1px solid var(--line);border-radius:10px;min-width:220px;font-family:inherit;';
-    const rows = emp ? permSections().map(([k,m])=>{
-      const c = cur(k,m);
-      return `<tr><td style="font-weight:700;">${m.icon} ${esc(m.title)}</td>${PERM_ACTIONS.map(([a])=>
-        `<td style="text-align:center;"><input type="checkbox" data-k="${k}" data-a="${a}" ${c[a]?'checked':''}></td>`).join('')}
+    const roleOf = e=>Object.keys(ROLE_LABELS).find(k=>ROLE_LABELS[k]===e.department)||'';
+    const rk = emp ? roleOf(emp) : '';
+    const roleDef = (k,m,role)=>{ const v=m.roles.includes(role); const vo=k==='subscriptions' && ['accommodation','accounting'].includes(role);
+      return {view:v, add:v&&k!=='subscriptions', edit:v&&!vo, delete:v&&!vo}; };
+    const effFor = (e,k,m)=>{ const sv=permMap(permRecordFor(e))[k]; return sv ? {view:!!sv.view,add:!!sv.add,edit:!!sv.edit,delete:!!sv.delete} : roleDef(k,m,roleOf(e)); };
+    const secs = permSections();
+    const GL = {...GROUP_LABELS, other:'أقسام أخرى'};
+    const groups = {}; secs.forEach(([k,m])=>{ const g=MODULE_GROUP_OF[k]||'other'; (groups[g]=groups[g]||[]).push([k,m]); });
+    const gOrder = ['pr','ops','admin','other'].filter(g=>groups[g]);
+    const selStyle = 'padding:10px 12px;border:1px solid var(--line);border-radius:10px;min-width:220px;font-family:inherit;background:var(--sand-50);';
+    const ACT_ICON = {view:'👁️',add:'➕',edit:'✏️',delete:'🗑️'};
+    const customCount = rec ? Object.keys(permMap(rec)).length : 0;
+
+    const editable = emp && rk && rk!=='admin';
+    const rowsHtml = editable ? gOrder.map(g=>`<tr class="pm-grp"><td colspan="6">${esc(GL[g])}</td></tr>` + groups[g].map(([k,m])=>{
+      const c = effFor(emp,k,m), d = roleDef(k,m,rk);
+      return `<tr data-row="${k}"><td style="font-weight:700;">${m.icon} ${esc(m.title)} <span class="badge gold pm-tag" style="display:none;">معدّل</span></td>
+        ${PERM_ACTIONS.map(([a])=>{ const dis = (k==='subscriptions' && a==='add');
+          return `<td class="pm-cell" style="text-align:center;"><input type="checkbox" data-k="${k}" data-a="${a}" data-def="${d[a]?1:0}" data-init="${c[a]&&!dis?1:0}" ${c[a]&&!dis?'checked':''} ${dis?'disabled title="إضافة الاشتراكات تلقائية من تحويل المهتم لمشترك"':''} style="width:18px;height:18px;"></td>`; }).join('')}
         <td style="text-align:center;"><button class="icon-btn" data-rowall="${k}">الكل</button></td></tr>`;
-    }).join('') : '';
+    }).join('')).join('') : '';
+
+    const others = emps.filter(e=>!emp || e.id!==emp.id);
     page.innerHTML = `
+      <style>
+        .pm-grp td{background:var(--sand-100);font-weight:800;color:var(--navy-800);padding:8px 12px;}
+        .pm-cell.pm-diff{background:#fff3d1;}
+        .pm-bar{position:sticky;bottom:0;margin-top:14px;padding:12px 16px;background:#fff;border:1.5px solid var(--line);border-radius:12px;
+          display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;box-shadow:0 -4px 16px rgba(0,0,0,.06);}
+        .pm-chip{display:inline-flex;gap:6px;align-items:center;background:var(--sand-100);border-radius:999px;padding:5px 12px;font-size:12.5px;font-weight:700;}
+        #perm-save[disabled]{opacity:.45;cursor:not-allowed;}
+      </style>
       <div class="page-head"><h2>🔐 الصلاحيات</h2></div>
+      <div class="assumption-note">اختر الفريق ثم الموظف، وحدّد ما يقدر يعمله في كل قسم. التغييرات تُطبَّق على الموظف عند تسجيل دخوله التالي أو تحديث الصفحة، وأي إجراء خارج صلاحياته تظهر له رسالة توضّح له ذلك.</div>
       <div class="card" style="margin-bottom:14px;"><div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
-        <select id="perm-team" style="${selStyle}"><option value="">— اختر الفريق —</option>
+        <select id="perm-team" style="${selStyle}"><option value="">1) اختر الفريق</option>
           ${teamNames.map(t=>`<option value="${esc(t)}" ${t===team?'selected':''}>${esc(t)}</option>`).join('')}
           ${hasNoTeam?`<option value="__none" ${team==='__none'?'selected':''}>بدون فريق</option>`:''}</select>
-        <select id="perm-emp" style="${selStyle}" ${team?'':'disabled'}><option value="">— اختر الموظف —</option>
-          ${list.map(e=>`<option value="${esc(e.id)}" ${emp&&e.id===emp.id?'selected':''}>${esc(e.name)}</option>`).join('')}</select>
-      </div></div>
-      ${emp ? `<div class="card">
-        <div class="assumption-note">${rec?'تم تخصيص صلاحيات هذا الموظف.':'لم تُخصَّص صلاحيات لهذا الموظف بعد — المعروض هو صلاحيات دوره الحالية (' + esc(emp.department||'غير محدد') + ').'}
-        صلاحية التعديل والحذف تنطبق على كل السجلات اللي بيشوفها الموظف في القسم.</div>
-        <div class="table-wrap"><table><thead><tr><th>القسم</th>${PERM_ACTIONS.map(([,l])=>`<th>${l}</th>`).join('')}<th></th></tr></thead><tbody>${rows}</tbody></table></div>
-        <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;">
-          <button class="btn-primary btn-gold" id="perm-save" style="width:auto;padding:10px 24px;">💾 حفظ الصلاحيات</button>
-          ${rec?`<button class="icon-btn del" id="perm-reset">↩️ رجوع لصلاحيات الدور</button>`:''}
-        </div></div>`
-      : `<div class="empty-state"><div class="big">🔐</div>اختر الفريق ثم الموظف لعرض الصلاحيات.</div>`}`;
+        <select id="perm-emp" style="${selStyle}" ${team?'':'disabled'}><option value="">2) اختر الموظف</option>
+          ${list.map(e=>`<option value="${esc(e.id)}" ${emp&&e.id===emp.id?'selected':''}>${esc(e.name)}${permRecordFor(e)?' ⭐':''}</option>`).join('')}</select>
+        ${emp ? `<span class="pm-chip">${esc(emp.name)} · ${esc(ROLE_LABELS[rk]||emp.department||'دور غير محدد')}</span>
+          <span class="badge ${rec?'gold':'gray'}">${rec?`صلاحيات مخصّصة (${customCount} قسم)`:'صلاحيات الدور الافتراضية'}</span>` : ''}
+      </div>${team && !emp ? `<div style="margin-top:8px;font-size:12.5px;color:var(--muted);">⭐ = موظف له صلاحيات مخصّصة.</div>`:''}</div>
+      ${!emp ? `<div class="empty-state"><div class="big">🔐</div>اختر الفريق ثم الموظف لعرض الصلاحيات.</div>`
+      : rk==='admin' ? `<div class="empty-state"><div class="big">🛡️</div>مدير النظام لديه كل الصلاحيات ولا يمكن تقييدها.</div>`
+      : !rk ? `<div class="empty-state"><div class="big">⚠️</div>قسم/دور هذا الموظف غير محدد في بياناته، حدّده من قسم «الموظفون» أولًا.</div>`
+      : `<div class="card">
+        ${!emp.username ? `<div class="assumption-note">⚠️ هذا الموظف ليس له حساب دخول بعد — الصلاحيات ستُحفظ وتُطبَّق أول ما يتم إنشاء حسابه.</div>`:''}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+          <button class="icon-btn" data-preset="role">↩️ افتراضي الدور</button>
+          <button class="icon-btn" data-preset="viewonly">👁️ عرض فقط</button>
+          <button class="icon-btn" data-preset="all">✅ كل الصلاحيات</button>
+          <button class="icon-btn" data-preset="none">⛔ منع الكل</button>
+          <select id="perm-copy" style="${selStyle}min-width:180px;padding:7px 10px;"><option value="">📋 نسخ صلاحيات من موظف...</option>
+            ${others.map(o=>`<option value="${esc(o.id)}">${esc(o.name)}${permRecordFor(o)?' ⭐':''}</option>`).join('')}</select>
+        </div>
+        <div id="perm-summary" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;"></div>
+        <div class="table-wrap"><table><thead><tr><th>القسم</th>
+          ${PERM_ACTIONS.map(([a,l])=>`<th style="text-align:center;">${ACT_ICON[a]} ${l}<br><input type="checkbox" data-col="${a}" title="تحديد/إلغاء العمود كله" style="width:16px;height:16px;margin-top:4px;"></th>`).join('')}
+          <th></th></tr></thead><tbody>${rowsHtml}</tbody></table></div>
+        <div style="margin-top:10px;font-size:12.5px;color:var(--muted);">الخلفية الذهبية = مختلف عن صلاحية الدور الافتراضية. تفعيل أي إذن يفعّل «عرض» تلقائيًا، وإلغاء «عرض» يلغي باقي الأذونات. التعديل والحذف ينطبقان على السجلات التي يراها الموظف في القسم.</div>
+        <div class="pm-bar"><span id="perm-state" style="font-weight:700;"></span>
+          <span style="display:flex;gap:8px;flex-wrap:wrap;">
+            ${rec?`<button class="icon-btn del" id="perm-reset">↩️ إلغاء التخصيص</button>`:''}
+            <button class="icon-btn" id="perm-undo" style="display:none;">تراجع</button>
+            <button class="btn-primary btn-gold" id="perm-save" style="width:auto;padding:10px 24px;" disabled>💾 حفظ الصلاحيات</button></span></div>
+      </div>`}`;
     document.getElementById('perm-team').addEventListener('change', e=>{ state.permTeam=e.target.value; state.permEmp=''; renderPermissionsSection(page); });
     document.getElementById('perm-emp').addEventListener('change', e=>{ state.permEmp=e.target.value; renderPermissionsSection(page); });
-    if(!emp) return;
+    if(!editable) return;
+
     const boxes = [...page.querySelectorAll('input[data-k]')];
-    boxes.forEach(b=>b.addEventListener('change', ()=>{
-      const row = boxes.filter(x=>x.dataset.k===b.dataset.k);
-      const view = row.find(x=>x.dataset.a==='view');
-      if(b.dataset.a!=='view' && b.checked) view.checked = true;
-      if(b.dataset.a==='view' && !b.checked) row.forEach(x=>x.checked=false);
-    }));
+    const box = (k,a)=>boxes.find(x=>x.dataset.k===k && x.dataset.a===a);
+    const setVal = (k,a,val)=>{
+      const b = box(k,a); if(!b || b.disabled) return;
+      if(a==='view'){ b.checked = val; if(!val) ['add','edit','delete'].forEach(x=>{ const o=box(k,x); if(o) o.checked=false; }); }
+      else { b.checked = val; if(val) box(k,'view').checked = true; }
+    };
+    const refresh = ()=>{
+      let dirty = 0; const cnt = {view:0,add:0,edit:0,delete:0};
+      boxes.forEach(b=>{ if(b.checked) cnt[b.dataset.a]++;
+        b.closest('td').classList.toggle('pm-diff', (b.checked?1:0)!==Number(b.dataset.def)); });
+      page.querySelectorAll('tr[data-row]').forEach(tr=>{
+        const bs = boxes.filter(b=>b.dataset.k===tr.dataset.row);
+        tr.querySelector('.pm-tag').style.display = bs.some(b=>(b.checked?1:0)!==Number(b.dataset.def)) ? '' : 'none';
+        if(bs.some(b=>(b.checked?1:0)!==Number(b.dataset.init))) dirty++;
+      });
+      page.querySelectorAll('input[data-col]').forEach(h=>{ const bs=boxes.filter(b=>b.dataset.a===h.dataset.col && !b.disabled); h.checked = bs.length>0 && bs.every(b=>b.checked); });
+      document.getElementById('perm-summary').innerHTML = [['view','يشوف'],['add','يضيف في'],['edit','يعدّل في'],['delete','يحذف من']]
+        .map(([a,l])=>`<span class="pm-chip">${ACT_ICON[a]} ${l} ${cnt[a]} ${cnt[a]===1?'قسم':'أقسام'}</span>`).join('');
+      document.getElementById('perm-state').innerHTML = dirty ? `<span style="color:var(--warn);">● تغييرات غير محفوظة (${dirty} ${dirty===1?'قسم':'أقسام'})</span>` : '<span style="color:var(--muted);">لا توجد تغييرات</span>';
+      document.getElementById('perm-save').disabled = !dirty;
+      document.getElementById('perm-undo').style.display = dirty ? '' : 'none';
+    };
+    boxes.forEach(b=>b.addEventListener('change', ()=>{ setVal(b.dataset.k, b.dataset.a, b.checked); refresh(); }));
+    page.querySelectorAll('input[data-col]').forEach(h=>h.addEventListener('change', ()=>{
+      secs.forEach(([k])=>setVal(k, h.dataset.col, h.checked)); refresh(); }));
     page.querySelectorAll('[data-rowall]').forEach(b=>b.addEventListener('click', ()=>{
-      const row = boxes.filter(x=>x.dataset.k===b.dataset.rowall);
-      const all = row.every(x=>x.checked); row.forEach(x=>x.checked=!all);
+      const k=b.dataset.rowall; const all = PERM_ACTIONS.every(([a])=>{ const x=box(k,a); return x.disabled || x.checked; });
+      PERM_ACTIONS.forEach(([a])=>setVal(k,a,!all)); refresh(); }));
+    const applyMap = fn=>{ secs.forEach(([k,m])=>{ const c=fn(k,m); PERM_ACTIONS.forEach(([a])=>{ const b=box(k,a); if(b && !b.disabled) b.checked=!!c[a]; }); setVal(k,'view',!!c.view); PERM_ACTIONS.forEach(([a])=>{ if(a!=='view') setVal(k,a,!!c[a]&&!!c.view); }); }); refresh(); };
+    page.querySelectorAll('[data-preset]').forEach(b=>b.addEventListener('click', ()=>{
+      const t=b.dataset.preset;
+      if(t==='role') applyMap((k,m)=>roleDef(k,m,rk));
+      else if(t==='all') applyMap(()=>({view:true,add:true,edit:true,delete:true}));
+      else if(t==='none') applyMap(()=>({view:false,add:false,edit:false,delete:false}));
+      else if(t==='viewonly') applyMap(k=>({view:box(k,'view').checked,add:false,edit:false,delete:false}));
     }));
+    document.getElementById('perm-copy').addEventListener('change', e=>{
+      const src = emps.find(x=>String(x.id)===String(e.target.value)); if(!src) return;
+      applyMap((k,m)=>effFor(src,k,m)); e.target.value='';
+      showToast('تم نسخ صلاحيات '+src.name+' — اضغط «حفظ الصلاحيات» لتأكيدها','ok');
+    });
+    document.getElementById('perm-undo').addEventListener('click', ()=>renderPermissionsSection(page));
     document.getElementById('perm-save').addEventListener('click', async ()=>{
+      // بنحفظ بس الأقسام المختلفة عن صلاحية الدور؛ الباقي يفضل ماشي مع الدور تلقائيًا.
       const map = {};
-      boxes.forEach(b=>{ (map[b.dataset.k] = map[b.dataset.k]||{})[b.dataset.a] = b.checked; });
-      await apiAdd('user_permissions', {
+      secs.forEach(([k,m])=>{ const d=roleDef(k,m,rk); const cur={};
+        PERM_ACTIONS.forEach(([a])=>{ cur[a]=!!box(k,a).checked; });
+        if(PERM_ACTIONS.some(([a])=>cur[a]!==!!d[a])) map[k]=cur; });
+      if(!Object.keys(map).length){ if(rec) await apiDelete('user_permissions', rec.id); }
+      else await apiAdd('user_permissions', {
         id:'perm_'+emp.id, employeeId:emp.id, employeeName:emp.name, username:emp.username||'', team:normTeam(emp.team),
         perms:JSON.stringify(map), updatedAt:new Date().toISOString(), updatedBy:state.user.name||''
       });
@@ -1849,9 +1976,10 @@
     });
     const rs = document.getElementById('perm-reset');
     if(rs) rs.addEventListener('click', async ()=>{
-      if(!confirm('رجوع '+emp.name+' لصلاحيات دوره الأصلية؟')) return;
-      await apiDelete('user_permissions', rec.id); renderPermissionsSection(page);
+      if(!confirm('إلغاء التخصيص ورجوع '+emp.name+' لصلاحيات دوره الأصلية؟')) return;
+      await apiDelete('user_permissions', rec.id); showToast('تم الرجوع لصلاحيات الدور','ok'); renderPermissionsSection(page);
     });
+    refresh();
   }
 
   async function renderSubscriptionsSection(page, cancelledOnly){
@@ -3235,7 +3363,7 @@
     </div>`;
     page.innerHTML=`<div class="page-head"><h2>🏆 الفائزون</h2></div>
       ${isPRUser()&&state.user.role!=='pr_manager'?`<div class="assumption-note">البيانات المعروضة هنا خاصة بنطاق صلاحيتك.</div>`:''}
-      ${!canEditWinners?`<div class="assumption-note">عرض فقط: ليس لديك صلاحية تعديل بيانات الفائزين.</div>`:''}
+      ${!canEditWinners?`<div class="assumption-note">🔒 عرض فقط — تعديل بيانات الفائزين ليس من صلاحياتك. تواصل مع مدير النظام لو محتاجه.</div>`:''}
       ${data.length?`<div class="card" style="padding:14px 20px;margin-bottom:14px;">
         <div style="display:flex;gap:10px;align-items:center;">
           <input type="text" id="winners-search-input" placeholder="🔍 ابحث في الفائزون..." value="${esc(searchTerm)}" style="flex:1;padding:10px 14px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;background:var(--sand-50);"/>
@@ -3576,12 +3704,12 @@
       container.querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click', (e)=>{
         e.stopPropagation();
         const row=visibleData.find(r=>String(r.id)===String(b.dataset.edit));
-        if(prCanEditRow(key,row)) openForm(key,b.dataset.edit,options.forcedAddValues); else alert('ليس لديك صلاحية لتعديل هذه البيانات');
+        if(prCanEditRow(key,row)) openForm(key,b.dataset.edit,options.forcedAddValues); else showDenied('edit',key,{own:ownHint(key,'edit')});
       }));
       container.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click', async (e)=>{
         e.stopPropagation();
         const row=visibleData.find(r=>String(r.id)===String(b.dataset.del));
-        if(!prCanDelete(key,row)){ alert('ليس لديك صلاحية لحذف هذه البيانات'); return; }
+        if(!prCanDelete(key,row)){ showDenied('delete',key,{own:ownHint(key,'delete')}); return; }
         if(!confirm('تأكيد الحذف؟')) return;
         await apiDelete(key,b.dataset.del);
         if(key==='subscriptions'){
@@ -3657,7 +3785,7 @@
         ${canAddNew ? `<button class="btn-primary btn-gold" id="add-btn" style="width:auto;padding:10px 20px;">+ إضافة</button>` : ''}
       </div>
       ${isPRUser() && state.user.role!=='pr_manager' ? `<div class="assumption-note">البيانات المعروضة هنا خاصة بنطاق صلاحيتك. لا يتم عرض بيانات أعضاء العلاقات العامة الآخرين.</div>`:''}
-      ${!canWriteModule && !canAssignTrip ? `<div class="assumption-note">عرض فقط: ليس لديك صلاحية إضافة أو تعديل أو حذف بيانات هنا.</div>`:''}
+      ${!canWriteModule && !canAssignTrip ? `<div class="assumption-note">🔒 عرض فقط — الإضافة والتعديل والحذف في هذا القسم ليست من صلاحياتك. تواصل مع مدير النظام لو محتاجها.</div>`:''}
       ${rowDetail ? `<div class="assumption-note">اضغط على أي صف في الجدول لعرض كل تفاصيله في نافذة منفصلة.</div>` : ''}
       ${key==='subscriptions' && !options.forcedFilter ? `<div class="assumption-note">يُنشأ الاشتراك تلقائيًا فقط عند تغيير حالة المهتم إلى "مشترك" من قسم المهتمون والمندوبون، ثم يختفي من قائمة المهتمين ويظهر هنا لاستكمال بياناته. وأي اشتراك تتغير حالته إلى "ملغي" يختفي من هنا ويظهر في "الاشتراكات الملغاة".</div>` : ''}
       ${key==='subscriptions' && options.forcedFilter && options.forcedFilter.subscriptionStatus==='ملغي' ? `<div class="assumption-note">الاشتراكات المعروضة هنا حالتها "ملغي". إذا أعدت حالة أي اشتراك منها إلى "نشط" أو "مكتمل" من نموذج التعديل، فسيعود تلقائيًا إلى قائمة "الاشتراكات" العادية.</div>` : ''}
@@ -3971,14 +4099,16 @@
   async function openForm(key, id, forcedValues){
     forcedValues = forcedValues || {};
     const mod = MODULES[key];
-    if(!mod || !mod.roles.includes(state.user.role)) return;
+    if(!mod) return;
+    if(!canViewModule(key)){ showDenied('view',key); return; }
+    if(!id && hasPerm(key,'add')===false){ showDenied('add',key); return; }
     const refKeys = mod.fields.filter(f=>f.type==='dynamicSelect'||f.type==='linkSelect').map(f=>f.ref);
     if(key==='subscriptions') refKeys.push('trip_hotels');
     await getDataMany([key, 'employees', ...refKeys]);
     const list = await getData(key);
     let row = id? list.find(r=>r.id===id) : {};
     if(id && key==='subscriptions') row = withSubAccom(row);
-    if(id && !prCanEditRow(key,row)){ alert('ليس لديك صلاحية لتعديل هذه البيانات'); return; }
+    if(id && !prCanEditRow(key,row)){ showDenied('edit',key,{own:ownHint(key,'edit')}); return; }
     let refOptions = {};
     for(const f of mod.fields){
       if(f.type==='dynamicSelect'){
