@@ -41,6 +41,30 @@ function doPost(e) {
       return json({ok:true, user:publicSessionUser(session)});
     }
 
+    // ملخص التعديلات: بيرجّع تعديلات سجل واحد، أو عدّادات خفيفة بدل تحميل جدول edit_logs كله للمتصفح.
+    if (action === 'history') {
+      if (['admin','pr_leader'].indexOf(String(session.role || '')) < 0) return json({ok:false, error:'Forbidden'});
+      const hp = body.payload || {};
+      const logs = filterRowsForSession(getCachedRows('edit_logs'), 'edit_logs', session);
+      const ht = String(hp.table || ''), hid = String(hp.recordId || '');
+      if (ht && hid) {
+        let mine = logs.filter(function(r){ return String(r.table || '') === ht && String(r.recordId || '') === hid; });
+        const seen = {}; mine.forEach(function(r){ seen[String(r.id || '')] = true; });
+        filterRowsForSession(archivedLogsFor(ht, hid), 'edit_logs', session).forEach(function(r){
+          if (!seen[String(r.id || '')]) mine.push(r);
+        });
+        mine = mine.sort(function(a,b){ return String(b.at || '').localeCompare(String(a.at || '')); }).slice(0, 100);
+        return json({ok:true, rows:mine});
+      }
+      const counts = {};
+      logs.forEach(function(r){
+        if (String(r.action || '') !== 'تعديل') return;
+        const k = String(r.table || '') + '|' + String(r.recordId || '');
+        counts[k] = (counts[k] || 0) + 1;
+      });
+      return json({ok:true, counts:counts});
+    }
+
     if (action === 'list') {
       const table = safeSheetName(body.table);
       if (!isAllowedTable(table) || !isTableReadAllowed(session, table)) {
@@ -1335,23 +1359,45 @@ let _rowsMemo = {};
 
 function resetRowsMemo() { _rowsMemo = {}; }
 
-// كاش بين الطلبات (CacheService) للجداول الصغيرة اللي بتتقرا في كل طلب للتحقق من
-// الجلسة والصلاحيات (users / employees / user_permissions / teams). كل كتابة عن طريق
-// النظام بتمسح الكاش فورًا (invalidateCachedRows)، فالتغيير بيظهر على طول. الاستثناء
-// الوحيد: تعديل يدوي مباشر في الشيت، بيظهر بعد LOOKUP_CACHE_TTL ثانية بالكتير.
-// جداول البيانات (leads/subscriptions/...) عمدًا مش مكاشّة عشان تفضل دايمًا طازة.
+// كاش بين الطلبات (CacheService):
+//  1) جداول صغيرة بتتقرا في كل طلب للتحقق من الجلسة والصلاحيات (users / employees / user_permissions / teams).
+//  2) جداول البيانات الكبيرة (الاشتراكات، المهتمين، الرحلات...) بكاش قصير DATA_CACHE_TTL ثانية،
+//     عشان تحميل/تحديث أكتر من مستخدم في نفس الوقت مايقراش الشيت كل مرة.
+// الكاش بيشتغل بنظام "نسخة" لكل جدول: أي كتابة عن طريق النظام (invalidateCachedRows) بتغيّر النسخة فورًا،
+// فالتغيير بيظهر على طول، وأي قراءة قديمة كانت شغالة وقتها بتتحط تحت النسخة القديمة اللي محدش بيقراها.
+// الاستثناء الوحيد: تعديل يدوي مباشر في الشيت — بيظهر خلال ثواني (فورًا لو اتركّب trigger الـ onEdit
+// عن طريق installMaintenanceTriggers، وإلا بعد انتهاء مدة الكاش).
 const LOOKUP_CACHE_TABLES = ['users','employees','user_permissions','teams'];
+const DATA_CACHE_TABLES = [
+  'subscriptions','indoor_leads','indoor_data','pr_member_data','visits','companies',
+  'callcenter_feedback','callcenter_payments','accommodation','trips','trip_hotels',
+  'accom_hotels','accom_rooms','accom_guests','dashboards','widgets','accounting','app_settings'
+];
 const LOOKUP_CACHE_TTL = 30;      // ثواني
+const DATA_CACHE_TTL = 25;        // ثواني
 const LOOKUP_CHUNK_CHARS = 30000; // حد CacheService 100KB للقيمة الواحدة (العربي = 2 بايت/حرف)
 const LOOKUP_MAX_CHUNKS = 20;
+const DATA_MAX_CHUNKS = 80;
 
-function lookupCacheGet(name) {
+function isCachedTable(name) { return LOOKUP_CACHE_TABLES.indexOf(name) >= 0 || DATA_CACHE_TABLES.indexOf(name) >= 0; }
+function cacheTtlFor(name) { return DATA_CACHE_TABLES.indexOf(name) >= 0 ? DATA_CACHE_TTL : LOOKUP_CACHE_TTL; }
+function maxChunksFor(name) { return DATA_CACHE_TABLES.indexOf(name) >= 0 ? DATA_MAX_CHUNKS : LOOKUP_MAX_CHUNKS; }
+
+function cacheVer(name) {
+  try { return CacheService.getScriptCache().get('ver:' + name) || '0'; } catch (_) { return '0'; }
+}
+function bumpCacheVer(name) {
+  try { CacheService.getScriptCache().put('ver:' + name, String(Date.now()) + String(Math.floor(Math.random() * 1000)), 21600); } catch (_) {}
+}
+
+function lookupCacheGet(name, ver) {
   try {
     const cache = CacheService.getScriptCache();
-    const n = Number(cache.get('rows:' + name + ':n') || 0);
+    const base = 'rows:' + name + ':' + ver + ':';
+    const n = Number(cache.get(base + 'n') || 0);
     if (!n) return null;
     const keys = [];
-    for (let i = 0; i < n; i++) keys.push('rows:' + name + ':' + i);
+    for (let i = 0; i < n; i++) keys.push(base + i);
     const parts = cache.getAll(keys);
     let s = '';
     for (let i = 0; i < n; i++) {
@@ -1363,37 +1409,28 @@ function lookupCacheGet(name) {
   } catch (_) { return null; }
 }
 
-function lookupCachePut(name, rows) {
+function lookupCachePut(name, rows, ver) {
   try {
     const s = JSON.stringify(rows);
     const n = Math.max(1, Math.ceil(s.length / LOOKUP_CHUNK_CHARS));
-    if (n > LOOKUP_MAX_CHUNKS) return; // كبير قوي: نقرأ من الشيت بدل ما نكاشّ
+    if (n > maxChunksFor(name)) return; // كبير قوي: نقرأ من الشيت بدل ما نكاشّ
+    const base = 'rows:' + name + ':' + ver + ':';
     const obj = {};
-    for (let i = 0; i < n; i++) obj['rows:' + name + ':' + i] = s.substr(i * LOOKUP_CHUNK_CHARS, LOOKUP_CHUNK_CHARS);
-    obj['rows:' + name + ':n'] = String(n);
-    CacheService.getScriptCache().putAll(obj, LOOKUP_CACHE_TTL);
-  } catch (_) {}
-}
-
-function lookupCacheClear(name) {
-  try {
-    const cache = CacheService.getScriptCache();
-    const nKey = 'rows:' + name + ':n';
-    const n = Number(cache.get(nKey) || 0);
-    const keys = [nKey];
-    for (let i = 0; i < Math.max(n, LOOKUP_MAX_CHUNKS); i++) keys.push('rows:' + name + ':' + i);
-    cache.removeAll(keys);
+    for (let i = 0; i < n; i++) obj[base + i] = s.substr(i * LOOKUP_CHUNK_CHARS, LOOKUP_CHUNK_CHARS);
+    obj[base + 'n'] = String(n);
+    CacheService.getScriptCache().putAll(obj, cacheTtlFor(name));
   } catch (_) {}
 }
 
 function getCachedRows(sheetName) {
   if (_rowsMemo[sheetName]) return _rowsMemo[sheetName];
-  const useLookup = LOOKUP_CACHE_TABLES.indexOf(sheetName) >= 0;
-  let rows = useLookup ? lookupCacheGet(sheetName) : null;
+  const cached = isCachedTable(sheetName);
+  const ver = cached ? cacheVer(sheetName) : '0'; // النسخة بتتاخد قبل قراءة الشيت
+  let rows = cached ? lookupCacheGet(sheetName, ver) : null;
   if (!rows) {
     const sheet = SpreadsheetApp.getActive().getSheetByName(sheetName);
     rows = sheet ? readRows(sheet) : [];
-    if (useLookup) lookupCachePut(sheetName, rows);
+    if (cached) lookupCachePut(sheetName, rows, ver);
   }
   _rowsMemo[sheetName] = rows;
   return rows;
@@ -1401,7 +1438,91 @@ function getCachedRows(sheetName) {
 
 function invalidateCachedRows(sheetName) {
   delete _rowsMemo[sheetName];
-  if (LOOKUP_CACHE_TABLES.indexOf(sheetName) >= 0) lookupCacheClear(sheetName);
+  if (isCachedTable(sheetName)) bumpCacheVer(sheetName);
+}
+
+// يتركّب مرة واحدة: trigger "onEdit" بيمسح كاش الجدول لما حد يعدّل الشيت يدويًا.
+function onSheetEditInvalidate(e) {
+  try { invalidateCachedRows(e.range.getSheet().getName()); } catch (_) {}
+}
+
+/* ---------------- أرشفة سجل التعديلات ----------------
+ * جدول edit_logs بيكبر طول الوقت وبيبطّأ الكتابة والقراءة. أي سطر أقدم من EDIT_LOG_KEEP_DAYS يوم
+ * بيتنقل لشيت edit_logs_archive (بنفس الأعمدة)، وبيفضل ظاهر في زر "ملخص التعديلات" برضه.
+ * بتشتغل تلقائيًا أول كل شهر بعد ما تشغّل installMaintenanceTriggers مرة واحدة. */
+const EDIT_LOG_KEEP_DAYS = 120;
+const EDIT_LOG_ARCHIVE_SHEET = 'edit_logs_archive';
+
+function archiveOldEditLogs() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) return;
+  try {
+    const ss = SpreadsheetApp.getActive();
+    const sh = ss.getSheetByName('edit_logs');
+    if (!sh || sh.getLastRow() < 2) return;
+    const lastCol = sh.getLastColumn();
+    const header = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+    const atCol = header.indexOf('at');
+    if (atCol < 0) return;
+
+    const values = sh.getRange(2, 1, sh.getLastRow() - 1, lastCol).getValues();
+    const cutoff = new Date(Date.now() - EDIT_LOG_KEEP_DAYS * 86400000).toISOString();
+    const old = [], keep = [];
+    values.forEach(function(r) {
+      const raw = r[atCol];
+      const at = raw instanceof Date ? raw.toISOString() : String(raw || '');
+      if (at && at < cutoff) old.push(r); else keep.push(r);
+    });
+    if (!old.length) return;
+
+    // 1) الأول نكتب في الأرشيف (لو فشل ما نمسحش حاجة من الأصل)
+    let arch = ss.getSheetByName(EDIT_LOG_ARCHIVE_SHEET);
+    if (!arch) { arch = ss.insertSheet(EDIT_LOG_ARCHIVE_SHEET); arch.setFrozenRows(1); }
+    let aHeader = arch.getLastColumn() > 0 ? arch.getRange(1, 1, 1, arch.getLastColumn()).getValues()[0].map(String).filter(Boolean) : [];
+    const missing = header.filter(function(k){ return k && aHeader.indexOf(k) < 0; });
+    if (missing.length) {
+      arch.getRange(1, aHeader.length + 1, 1, missing.length).setValues([missing]);
+      aHeader = aHeader.concat(missing);
+    }
+    const rowsOut = old.map(function(r) {
+      return aHeader.map(function(k){ const idx = header.indexOf(k); return idx >= 0 ? r[idx] : ''; });
+    });
+    arch.getRange(arch.getLastRow() + 1, 1, rowsOut.length, aHeader.length).setValues(rowsOut);
+    SpreadsheetApp.flush();
+
+    // 2) بعدين نعيد كتابة الأصل بالسطور الحديثة بس
+    sh.getRange(2, 1, sh.getLastRow() - 1, lastCol).clearContent();
+    if (keep.length) sh.getRange(2, 1, keep.length, lastCol).setValues(keep);
+    resetRowsMemo();
+  } finally {
+    try { lock.releaseLock(); } catch (_) {}
+  }
+}
+
+// سطور سجل واحد من الأرشيف (بحث سريع بـ TextFinder من غير قراءة الأرشيف كله).
+function archivedLogsFor(table, rid) {
+  try {
+    const arch = SpreadsheetApp.getActive().getSheetByName(EDIT_LOG_ARCHIVE_SHEET);
+    if (!arch || arch.getLastRow() < 2) return [];
+    const lastCol = arch.getLastColumn();
+    const header = arch.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+    const ridCol = header.indexOf('recordId') + 1;
+    if (!ridCol) return [];
+    const found = arch.getRange(2, ridCol, arch.getLastRow() - 1, 1).createTextFinder(rid).matchEntireCell(true).findAll();
+    const out = [];
+    found.slice(0, 100).forEach(function(rg) {
+      const o = rowValuesToObject(header, arch.getRange(rg.getRow(), 1, 1, lastCol).getValues()[0]);
+      if (String(o.table || '') === table) out.push(o);
+    });
+    return out;
+  } catch (_) { return []; }
+}
+
+// تشغّلها مرة واحدة من محرر Apps Script (Run) عشان تركّب: الأرشفة الشهرية + مسح الكاش عند التعديل اليدوي.
+function installMaintenanceTriggers() {
+  const have = ScriptApp.getProjectTriggers().map(function(t){ return t.getHandlerFunction(); });
+  if (have.indexOf('archiveOldEditLogs') < 0) ScriptApp.newTrigger('archiveOldEditLogs').timeBased().onMonthDay(1).atHour(3).create();
+  if (have.indexOf('onSheetEditInvalidate') < 0) ScriptApp.newTrigger('onSheetEditInvalidate').forSpreadsheet(SpreadsheetApp.getActive()).onEdit().create();
 }
 
 function upsertRowsBatch(sheet, rows) {
@@ -1465,11 +1586,29 @@ function deleteRowsBatch(sheet, ids) {
 
 /* ---------------- Sheets CRUD ---------------- */
 
+// خلية التاريخ في الشيت بترجع Date على منتصف الليل بتوقيت الشيت. لو حوّلناها بـ toISOString()
+// (توقيت UTC) في بلد توقيتها +2/+3 زي مصر بتتحول ليوم قبله (2 → 1). عشان كده التاريخ العادي
+// بنرجّعه كـ yyyy-MM-dd بتوقيت الشيت نفسه، والتواريخ اللي فيها وقت (زي سجل التعديلات) بتفضل ISO.
+let _sheetTz = null;
+function sheetTz() {
+  if (!_sheetTz) {
+    try { _sheetTz = SpreadsheetApp.getActive().getSpreadsheetTimeZone(); } catch (_) {}
+    _sheetTz = _sheetTz || Session.getScriptTimeZone() || 'Africa/Cairo';
+  }
+  return _sheetTz;
+}
+function dateCellToString(d) {
+  if (isNaN(d.getTime())) return '';
+  const tz = sheetTz();
+  if (Utilities.formatDate(d, tz, 'HH:mm:ss') === '00:00:00') return Utilities.formatDate(d, tz, 'yyyy-MM-dd');
+  return d.toISOString();
+}
+
 function rowValuesToObject(h, row) {
   const obj = {};
   h.forEach((key,i) => {
     let v = row[i];
-    if (v instanceof Date) v = v.toISOString();
+    if (v instanceof Date) v = dateCellToString(v);
     if (typeof v === 'string') {
       const t=v.trim();
       if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
