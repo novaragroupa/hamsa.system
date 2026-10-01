@@ -1053,6 +1053,57 @@
   /* ---------------- عمليات البيانات (فورية + مزامنة في الخلفية) ---------------- */
 
   /* ---------------- سجل التعديلات (قسم "التعديلات") ---------------- */
+
+  /* ---------------- زر "ملخص التعديلات" بجانب أزرار التعديل/الحذف ---------------- */
+  function canSeeHistory(){ return !!state.user && ['admin','pr_leader'].includes(state.user.role); }
+  function histBtn(table, id, style){
+    if(!canSeeHistory() || !id) return '';
+    const n = (cache.edit_logs||[]).filter(l=>l.table===table && String(l.recordId)===String(id) && l.action==='تعديل').length;
+    return `<button class="icon-btn" data-hist="${esc(table)}" data-hid="${esc(id)}" title="ملخص التعديلات" style="${style||''}">🕘${n?`<sup style="font-weight:700;margin-inline-start:2px;">${n}</sup>`:''}</button>`;
+  }
+  async function openHistoryModal(table, id){
+    const bg = document.createElement('div'); bg.className = 'modal-bg';
+    bg.innerHTML = `<div class="modal"><h3>🕘 ملخص التعديلات</h3><div id="hist-body">جارٍ التحميل...</div>
+      <div class="modal-actions"><button type="button" class="btn-secondary" id="hist-close">إغلاق</button></div></div>`;
+    document.body.appendChild(bg);
+    bg.querySelector('#hist-close').addEventListener('click', ()=>bg.remove());
+    bg.addEventListener('click', e=>{ if(e.target===bg) bg.remove(); });
+    const body = bg.querySelector('#hist-body');
+    try{
+      if(!cacheTime.edit_logs || Date.now()-cacheTime.edit_logs>10000) cache.edit_logs = null;
+      const all = (await getData('edit_logs')).slice();
+      logQ.forEach(x=>{ if(!all.some(r=>r.id===x.id)) all.push(x); });
+      const rows = all.filter(l=>l.table===table && String(l.recordId)===String(id)).sort((a,b)=>String(b.at).localeCompare(String(a.at)));
+      const edits = rows.filter(r=>r.action==='تعديل').length;
+      const fmtDT = iso=>{ const d=new Date(iso); if(isNaN(d)) return esc(iso||''); const p=n=>String(n).padStart(2,'0');
+        return `<span dir="ltr">${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}</span>`; };
+      const cls = {'إضافة':'green','تعديل':'blue','حذف':'red'};
+      const lines = r=>{ let a=[]; try{ a=JSON.parse(r.changes||'[]'); }catch(_){}
+        if(!Array.isArray(a)||!a.length) return '';
+        const h = a.map(c=> r.action==='تعديل'
+          ? `<div><b>${esc(c.k)}:</b> <span style="color:var(--danger)">${esc(c.f||'—')}</span> ← <span style="color:var(--success)">${esc(c.t||'—')}</span></div>`
+          : `<div><b>${esc(c.k)}:</b> ${esc(c.t||'—')}</div>`).join('');
+        return r.action==='تعديل' ? `<div style="margin-top:8px;font-size:13px;">${h}</div>`
+          : `<details style="margin-top:8px;font-size:13px;"><summary style="cursor:pointer;">عرض البيانات</summary>${h}</details>`; };
+      body.innerHTML = `<div style="margin-bottom:12px;font-weight:700;">${edits ? `✅ تم التعديل ${edits} ${edits===1?'مرة':'مرات'}` : '⚪ لم يتم تعديل هذا السجل'}</div>`
+        + (rows.length ? `<div style="max-height:60vh;overflow:auto;display:flex;flex-direction:column;gap:10px;">${rows.map(r=>`
+            <div style="border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;">
+              <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center;">
+                <span><span class="badge ${cls[r.action]||'gray'}">${esc(r.action)}</span> <b>${esc(r.user||'—')}</b>${r.team?` <span style="color:var(--muted);">(${esc(r.team)})</span>`:''}</span>
+                <span style="color:var(--muted);font-size:12.5px;">${fmtDT(r.at)}</span>
+              </div>${lines(r)}</div>`).join('')}</div>`
+          : `<div class="assumption-note">لا يوجد سجل تعديلات لهذا العنصر (ممكن يكون اتعمل قبل تفعيل تسجيل التعديلات).</div>`);
+    }catch(err){ body.innerHTML = `<div class="assumption-note">تعذّر تحميل ملخص التعديلات.</div>`; }
+  }
+  if(!window.__histBound){
+    window.__histBound = true;
+    document.addEventListener('click', ev=>{
+      const b = ev.target.closest && ev.target.closest('[data-hist]'); if(!b) return;
+      ev.preventDefault(); ev.stopPropagation(); // ما يفتحش الكارت/الصف اللي حواليه
+      openHistoryModal(b.dataset.hist, b.dataset.hid);
+    }, true);
+  }
+
   const LOG_SKIP = new Set(['edit_logs','app_settings','dashboards','widgets','user_permissions']);
   const logQ = []; let logRunning = false;
   function logFieldLabel(table,key){ const m=MODULES[table]; const f=m&&m.fields&&m.fields.find(x=>x.key===key); return f?f.label:key; }
@@ -1652,9 +1703,6 @@
     if(state.user.role==='admin'){
       groups.admin.push(`<button class="nav-item ${state.view==='permissions'?'active':''}" data-view="permissions">🔐<span>الصلاحيات</span></button>`);
     }
-    if(['admin','pr_leader'].includes(state.user.role)){
-      groups.admin.push(`<button class="nav-item ${state.view==='edit_logs'?'active':''}" data-view="edit_logs">📝<span>التعديلات</span></button>`);
-    }
     // "الاشتراكات الملغاة" مش موديول مستقل في MODULES — هي نفس بيانات
     // الاشتراكات بس مفلترة على حالة "ملغي"، فبتظهر لنفس اللي أصلًا يقدر
     // يشوف "الاشتراكات".
@@ -1717,7 +1765,6 @@
     }
     if(state.view==='dashboard') await renderDashboard(page, mods);
     else if(state.view==='pr_teams') await renderPRHierarchy(page);
-    else if(state.view==='edit_logs') await renderEditLogsSection(page);
     else if(state.view==='permissions') await renderPermissionsSection(page);
     else if(state.view==='teams') await renderTeamsSection(page);
     else if(state.view==='analytics') await renderAnalytics(page, analyticsAccessibleModules());
@@ -1807,63 +1854,6 @@
     });
   }
 
-  /* ---------------- قسم "التعديلات": مدير النظام يرى الكل، ورئيس الفريق يرى فريقه، وغيرهم لا يرون شيئًا ---------------- */
-  async function renderEditLogsSection(page){
-    const role = state.user.role;
-    if(!['admin','pr_leader'].includes(role)){
-      page.innerHTML = `<div class="page-head"><h2>📝 التعديلات</h2></div><div class="empty-state"><div class="big">🔒</div>هذا القسم متاح لمدير النظام ورؤساء الفرق فقط.</div>`;
-      return;
-    }
-    if(!cacheTime.edit_logs || Date.now()-cacheTime.edit_logs>15000) cache.edit_logs = null;
-    let rows = (await getData('edit_logs')).slice();
-    logQ.forEach(e=>{ if(!rows.some(r=>r.id===e.id)) rows.push(e); });
-    if(role==='pr_leader'){
-      const team = await prTeamName();
-      const names = await prAllowedNames();
-      rows = rows.filter(r=> (team && normTeam(r.team)===team) || names.has(r.user));
-    }
-    rows.sort((a,b)=>String(b.at).localeCompare(String(a.at)));
-    const uniq = k=>[...new Set(rows.map(r=>r[k]).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),'ar'));
-    const opts = (arr,label)=>`<option value="">${label}</option>`+arr.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');
-    const fmtDT = iso=>{ const d=new Date(iso); if(isNaN(d)) return esc(iso||''); const p=n=>String(n).padStart(2,'0');
-      return `<span dir="ltr">${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}</span>`; };
-    const actCls = {'إضافة':'green','تعديل':'blue','حذف':'red'};
-    const changesHtml = r=>{
-      let arr=[]; if(Array.isArray(r.changes)) arr=r.changes; else { try{ arr=JSON.parse(r.changes||'[]'); }catch(_){} }
-      if(!Array.isArray(arr) || !arr.length) return '—';
-      return arr.map(c=> r.action==='تعديل'
-        ? `<div><b>${esc(c.k)}:</b> <span style="color:var(--danger)">${esc(c.f||'—')}</span> ← <span style="color:var(--success)">${esc(c.t||'—')}</span></div>`
-        : `<div><b>${esc(c.k)}:</b> ${esc(c.t||'—')}</div>`).join('');
-    };
-    const sel = 'padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;background:var(--sand-50);';
-    page.innerHTML = `
-      <div class="page-head"><h2>📝 التعديلات</h2><button class="icon-btn" id="el-refresh" style="background:var(--sand-100);">🔄 تحديث</button></div>
-      ${role==='pr_leader' ? `<div class="assumption-note">بتظهر لك هنا تعديلات أعضاء فريقك فقط.</div>` : ''}
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
-        <input type="text" id="el-search" placeholder="🔍 ابحث في التعديلات..." style="flex:1;min-width:200px;${sel}"/>
-        <select id="el-user" style="${sel}">${opts(uniq('user'),'كل الموظفين')}</select>
-        <select id="el-table" style="${sel}">${opts(uniq('tableLabel'),'كل الأقسام')}</select>
-        <select id="el-action" style="${sel}">${opts(['إضافة','تعديل','حذف'],'كل العمليات')}</select>
-      </div>
-      <div class="card"><div id="el-wrap"></div></div>`;
-    const draw = ()=>{
-      const q = document.getElementById('el-search').value.trim().toLowerCase();
-      const u = document.getElementById('el-user').value, t = document.getElementById('el-table').value, a = document.getElementById('el-action').value;
-      const list = rows.filter(r=>(!u||r.user===u)&&(!t||r.tableLabel===t)&&(!a||r.action===a)
-        &&(!q || [r.user,r.team,r.tableLabel,r.action,r.recordLabel,typeof r.changes==='string'?r.changes:JSON.stringify(r.changes||'')].join(' ').toLowerCase().includes(q)));
-      const shown = list.slice(0,500);
-      document.getElementById('el-wrap').innerHTML = shown.length
-        ? `<div class="table-wrap"><table><thead><tr><th>التاريخ والوقت</th><th>الموظف</th><th>الفريق</th><th>القسم</th><th>العملية</th><th>السجل</th><th>التفاصيل</th></tr></thead><tbody>${shown.map(r=>`<tr>
-            <td style="white-space:nowrap;">${fmtDT(r.at)}</td><td>${esc(r.user)}</td><td>${esc(r.team||'—')}</td><td>${esc(r.tableLabel)}</td>
-            <td><span class="badge ${actCls[r.action]||'gray'}">${esc(r.action)}</span></td><td>${esc(r.recordLabel||'—')}</td><td>${changesHtml(r)}</td></tr>`).join('')}</tbody></table></div>
-          ${list.length>shown.length?`<div class="assumption-note">معروض أحدث ${shown.length} من ${list.length} — استخدم البحث أو الفلاتر لتضييق النتائج.</div>`:''}`
-        : `<div class="empty-state"><div class="big">📭</div>لا توجد تعديلات مسجّلة</div>`;
-    };
-    draw();
-    ['el-search','el-user','el-table','el-action'].forEach(id=>document.getElementById(id).addEventListener(id==='el-search'?'input':'change', draw));
-    document.getElementById('el-refresh').addEventListener('click', ()=>{ cache.edit_logs=null; render(); });
-  }
-
   async function renderSubscriptionsSection(page, cancelledOnly){
     if(cancelledOnly){
       await renderModule(page, 'subscriptions', {
@@ -1913,6 +1903,7 @@
             <div class="nm" style="color:var(--navy-700);font-weight:700;">${cnt} عضو</div>
             <button class="icon-btn" data-editteam="${esc(t.id)}" style="margin-top:6px;">✏️ تعديل</button>
             <button class="icon-btn del" data-delteam="${esc(t.id)}" style="margin-top:6px;">🗑️ حذف</button>
+            ${histBtn('teams', t.id, 'margin-top:6px;')}
           </div>`;
         }).join('')}</div>` : `<div class="empty-state"><div class="big">📭</div>لا توجد فرق بعد — ابدأ بالإضافة</div>`}
       </div>`;
@@ -2229,7 +2220,7 @@
           <td>${esc(fmtDate(e.date))}</td><td>${esc(e.description)}</td><td>${esc(e.packageType)}</td>
           <td>${e.debit? money_(e.debit):'—'}</td><td>${e.credit? money_(e.credit):'—'}</td>
           <td><b>${money_(running)}</b></td>
-          <td style="white-space:nowrap;"><button class="icon-btn" data-edit="${e.id}">✏️</button><button class="icon-btn del" data-del="${e.id}">🗑️</button></td>
+          <td style="white-space:nowrap;"><button class="icon-btn" data-edit="${e.id}">✏️</button><button class="icon-btn del" data-del="${e.id}">🗑️</button>${histBtn('accounting', e.id)}</td>
         </tr>`;
       }).join('');
       const totalDebit = list.reduce((s,e)=>s+num_(e.debit),0);
@@ -2797,6 +2788,7 @@
             </div>
             ${canManageAccommodation()? `<button class="icon-btn" data-edithotel="${h.id}" style="margin-top:6px;">✏️ تعديل</button>
              <button class="icon-btn del" data-delhotelstd="${h.id}" style="margin-top:6px;">🗑️ حذف</button>`:''}
+            ${histBtn('accom_hotels', h.id, 'margin-top:6px;')}
           </div>`;
         }).join('')}</div>` : `<div class="empty-state"><div class="big">📭</div>لا توجد فنادق بعد — ابدأ بالإضافة</div>`}
       </div>`;
@@ -2898,6 +2890,7 @@
                 <span style="font-size:12.5px;color:var(--muted);">الإتاحة: ${esc(fmtDate(r.availableFrom)||'—')} → ${esc(fmtDate(r.availableTo)||'—')}</span>
                 ${canManageAccommodation()? `<button class="icon-btn" data-editroomstd="${r.id}">✏️ تعديل</button>
                  <button class="icon-btn del" data-delroomstd="${r.id}">🗑️ حذف</button>`:''}
+                ${histBtn('accom_rooms', r.id)}
               </div>
             </div>
             ${guestsTableHtml}
@@ -3004,6 +2997,7 @@
             ${tripCountdownHtml(t, assignedCount)}
             ${canManageAccommodation()? `<button class="icon-btn" data-edittrip="${t.id}" style="margin-top:6px;">✏️ تعديل</button>
              <button class="icon-btn del" data-deltrip="${t.id}" style="margin-top:6px;">🗑️ حذف الرحلة فقط</button>`:''}
+            ${histBtn('trips', t.id, 'margin-top:6px;')}
           </div>`;
         }).join('')}</div>` : `<div class="empty-state"><div class="big">📭</div>لا توجد رحلات بعد — ابدأ بالإضافة</div>`}
       </div>`;
@@ -3181,7 +3175,7 @@
         </select></td>`;
       }
       return `<td><input class="cell-input" data-id="${row.id}" data-key="${f.key}" value="${esc(row[f.key]||'')}"/></td>`;
-    }).join('')}<td><button class="icon-btn del" data-delrow="${row.id}">🗑️</button></td></tr>`;
+    }).join('')}<td><button class="icon-btn del" data-delrow="${row.id}">🗑️</button>${histBtn('indoor_data', row.id)}</td></tr>`;
   }
 
   /* ---------------- قسم الفائزون ---------------- */
@@ -3832,7 +3826,8 @@
       <td style="white-space:nowrap;">
         ${(()=>{ const k=Object.keys(MODULES).find(x=>MODULES[x]===mod); const pe=hasPerm(k,'edit'), pd=hasPerm(k,'delete');
           return (canWrite && pe!==false ? `<button class="icon-btn" data-edit="${row.id}">✏️</button>` : '')
-               + (canWrite && pd!==false ? `<button class="icon-btn del" data-del="${row.id}">🗑️</button>` : ''); })()}
+               + (canWrite && pd!==false ? `<button class="icon-btn del" data-del="${row.id}">🗑️</button>` : '')
+               + (canWrite ? histBtn(k, row.id) : ''); })()}
       </td></tr>`;
   }
 
