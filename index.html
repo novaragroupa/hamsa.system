@@ -1708,7 +1708,8 @@
   }
 
   function analyticsAccessibleModules(){
-    if(['admin','analyst','accommodation'].includes(state.user.role)) return Object.entries(MODULES).filter(([k])=>!['companies','callcenter_payments','indoor_data'].includes(k));
+    if(state.user.role==='accommodation') return Object.entries(MODULES).filter(([k])=>['accommodation','teams','employees','indoor_leads','pr_member_data','subscriptions','winners'].includes(k));
+    if(['admin','analyst'].includes(state.user.role)) return Object.entries(MODULES).filter(([k])=>!['companies','callcenter_payments','indoor_data'].includes(k));
     return accessibleModules();
   }
 
@@ -2518,8 +2519,8 @@
 
   async function renderAnalytics(page, mods){
     const accessibleKeys = new Set(mods.map(([k])=>k));
-    // التسكين: عرض فقط — يشوف اللوحات اللي ينشئها المدير ومايقدرش يضيف/يعدّل/يحذف.
-    const readOnly = state.user.role==='accommodation';
+    // التسكين: يشوف لوحات المدير العام للعلاقات العامة ويعدّل عناصرها (حذف اللوحة نفسها لصاحبها فقط).
+    const readOnly = false; // التسكين يقدر يعدّل لوحات المدير العام للعلاقات العامة
     await getDataMany(['dashboards','widgets','employees']);
     const allBoards = await getData('dashboards');
     const myBoards = allBoards.filter(b=> accessibleKeys.has(b.sourceModule));
@@ -2645,7 +2646,7 @@
           <div class="analytics-filterbar">${filtersHtml || '<span style="color:var(--muted);font-size:13px;">لا توجد خيارات تصفية لهذا المصدر</span>'}</div>
           <div style="display:flex;gap:8px;">
             ${filterFields.length? `<button class="btn-secondary" id="clear-filters" style="width:auto;padding:9px 16px;">✖ مسح التصفية</button>`:''}
-            ${readOnly ? '' : `<button class="icon-btn del" id="del-board-btn">🗑️ حذف اللوحة</button>`}
+            ${(state.user.role==='admin' || String(board.createdBy||'')===String(state.user.name||'')) ? `<button class="icon-btn del" id="del-board-btn">🗑️ حذف اللوحة</button>` : ''}
           </div>
         </div>
         ${dailyLogHtml}
