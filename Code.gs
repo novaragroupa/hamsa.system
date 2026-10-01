@@ -200,16 +200,16 @@ const ALL_TABLES = [
 
 const TABLE_READ_ROLES = {
   users: ['admin','hr'],
-  teams: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out'],
+  teams: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','accommodation'],
   employees: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','callcenter','accommodation','system','analyst'],
   companies: ['admin','pr_out','pr_in','analyst'],
   visits: ['admin','pr_out','analyst'],
-  indoor_leads: ['admin','pr_manager','pr_leader','pr_member','pr_in','analyst'],
+  indoor_leads: ['admin','pr_manager','pr_leader','pr_member','pr_in','analyst','accommodation'],
   indoor_data: ['admin','pr_manager','pr_leader','pr_member','pr_in','analyst'],
   callcenter_feedback: ['admin','callcenter','analyst'],
   callcenter_payments: ['admin','callcenter','analyst'],
   accommodation: ['admin','accommodation','system','analyst'],
-  pr_member_data: ['admin','pr_manager','pr_leader','pr_member','analyst'],
+  pr_member_data: ['admin','pr_manager','pr_leader','pr_member','analyst','accommodation'],
   // اتضافلهم accommodation و accounting هنا بس (قراءة فقط) عشان يقدروا يشوفوا
   // صفحتي "الاشتراكات" و"الفائزون" - صلاحية الكتابة (TABLE_WRITE_ROLES) تحت
   // ما اتغيرتش، يعني لسه مايقدروش يضيفوا/يعدلوا/يحذفوا فيها.
@@ -854,7 +854,8 @@ function serverAnalyticsModulesForRole(role) {
     pr_out:['employees','companies','visits'],
     pr_in:['employees','indoor_leads','indoor_data'],
     callcenter:['callcenter_feedback'],
-    accommodation:['accommodation'],
+    // التسكين بيشوف لوحات المدير العام للعلاقات العامة (نفس الأقسام) + لوحات التسكين.
+    accommodation:['accommodation','teams','employees','indoor_leads','pr_member_data','subscriptions','winners'],
     system:['accommodation'],
     analyst:['teams','employees','indoor_leads','pr_member_data','subscriptions','callcenter_feedback','accommodation']
   };
@@ -948,6 +949,10 @@ function sanitizeRowsForClient(table, rows, session) {
       delete c.sessionVersion;
     }
 
+    if (String(session.role || '') === 'accommodation' && ['indoor_leads','pr_member_data'].indexOf(table) >= 0) {
+      delete c.nationalId; delete c.phone; delete c.specialNumber;
+    }
+
     if (table === 'employees' && ['admin','hr'].indexOf(String(session.role || '')) < 0) {
       delete c.salary;
       delete c.specialNumber;
@@ -992,6 +997,17 @@ function rowBelongsToSession(session, table, row) {
   return true;
 }
 
+// صاحب اللوحة، أو التسكين لو اللوحة اتعملت بواسطة المدير العام للعلاقات العامة.
+function boardEditableBy(session, dashboard) {
+  if (!dashboard) return false;
+  const creator = String(dashboard.createdBy || '');
+  if (creator === String(session.name || '')) return true;
+  if (String(session.role || '') !== 'accommodation') return false;
+  return getCachedRows('users').some(function(u){
+    return String(u.name || '') === creator && String(u.role || '') === 'pr_manager';
+  });
+}
+
 function canMutateTable(session, table, payload, action) {
   // Generic users mutations are deliberately disabled. Use the dedicated
   // createEmployeeAccount / changePassword actions instead.
@@ -1033,7 +1049,7 @@ function canMutateTable(session, table, payload, action) {
           if (!p.sourceModule || allowedModules.indexOf(String(p.sourceModule)) < 0) return false;
           if (!p.id) return true;
           const existing = existingDashboards.find(function(d){ return String(d.id) === String(p.id); });
-          return !!existing && String(existing.createdBy || '') === String(session.name || '');
+          return boardEditableBy(session, existing);
         });
       }
 
@@ -1041,7 +1057,8 @@ function canMutateTable(session, table, payload, action) {
       if (p.sourceModule && allowedModules.indexOf(String(p.sourceModule)) < 0) return false;
       if (action === 'delete' || p.id) {
         const existing = getCachedRows('dashboards').find(function(d){ return String(d.id) === String(p.id); });
-        return !!existing && String(existing.createdBy || '') === String(session.name || '');
+        if (action === 'delete') return !!existing && String(existing.createdBy || '') === String(session.name || '');
+        return boardEditableBy(session, existing);
       }
       return true;
     }
@@ -1055,7 +1072,7 @@ function canMutateTable(session, table, payload, action) {
       const existingWidgets = getCachedRows('widgets');
       return rows.every(function(p) {
         const dashboard = dashboards.find(function(d){ return String(d.id) === String(p.dashboardId || ''); });
-        if (!dashboard || String(dashboard.createdBy || '') !== String(session.name || '')) return false;
+        if (!boardEditableBy(session, dashboard)) return false;
         if (!p.id) return true;
         const existing = existingWidgets.find(function(w){ return String(w.id) === String(p.id); });
         return !existing || String(existing.dashboardId || '') === String(p.dashboardId || '');
@@ -1070,7 +1087,7 @@ function canMutateTable(session, table, payload, action) {
         const widget = widgets.find(function(w){ return String(w.id) === id; });
         if (!widget) return true;
         const dashboard = dashboards.find(function(d){ return String(d.id) === String(widget.dashboardId || ''); });
-        return !!dashboard && String(dashboard.createdBy || '') === String(session.name || '');
+        return boardEditableBy(session, dashboard);
       });
     }
 
@@ -1081,7 +1098,7 @@ function canMutateTable(session, table, payload, action) {
       if (existingWidget) dashboardId = String(existingWidget.dashboardId || '');
     }
     const dashboard = getCachedRows('dashboards').find(function(d){ return String(d.id) === dashboardId; });
-    return !!dashboard && String(dashboard.createdBy || '') === String(session.name || '');
+    return boardEditableBy(session, dashboard);
   }
 
   if (table === 'app_settings' && session.role !== 'admin') {
@@ -1158,7 +1175,8 @@ function enforceOwnership(session, table, payload) {
 
   if (['dashboards','widgets'].indexOf(table) >= 0 && session.role !== 'admin') {
     if (table === 'dashboards') {
-      p.createdBy = myName;
+      const prev = p.id ? getCachedRows('dashboards').find(function(d){ return String(d.id) === String(p.id); }) : null;
+      p.createdBy = (prev && prev.createdBy) ? String(prev.createdBy) : myName;
     }
   }
 
