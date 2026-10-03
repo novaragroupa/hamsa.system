@@ -220,6 +220,18 @@
   .area-chip{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;text-align:center;transition:border-color .15s;}
   .area-chip .cnt{font-size:22px;font-weight:800;color:var(--navy-800);}
   .area-chip .nm{font-size:12.5px;color:var(--muted);margin-top:4px;}
+  .fb-client{border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin-bottom:12px;background:#fff;}
+  .fb-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;}
+  .fb-top b{font-size:15px;color:var(--navy-900);}
+  .fb-top .ph{color:var(--muted);font-size:13px;direction:ltr;unicode-bidi:embed;}
+  .fb-rate{display:flex;gap:6px;flex-wrap:wrap;}
+  .fb-star{min-width:44px;padding:9px 0;border-radius:10px;background:var(--sand-100);color:var(--navy-800);font-weight:800;font-size:15px;}
+  .fb-star:hover{background:var(--line);}
+  .fb-star.active{background:var(--navy-800);color:#fff;}
+  .fb-star.active.lo{background:var(--danger);} .fb-star.active.mid{background:var(--warn);} .fb-star.active.hi{background:var(--success);}
+  .fb-details{margin-top:10px;}
+  .fb-details textarea{width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;background:var(--sand-50);}
+  .fb-details textarea:focus{outline:none;border-color:var(--gold-500);background:#fff;}
   .area-chip.room-full{background:#fdeceb;border-color:var(--danger);}
   .area-chip.room-full .cnt{color:var(--danger);}
   .click-card:hover{border-color:var(--gold-500);}
@@ -464,8 +476,9 @@
       fields:[
         {key:'clientName', label:'اسم العميل', type:'text', required:true},
         {key:'phone', label:'رقم الهاتف', type:'text'},
+        {key:'tripName', label:'الرحلة', type:'text'},
         {key:'tripDate', label:'تاريخ الرحلة', type:'date'},
-        {key:'rating', label:'التقييم', type:'select', options:['5','4','3','2','1']},
+        {key:'rating', label:'التقييم', type:'select', options:['0','1','2','3','4','5']},
         {key:'feedback', label:'رأي العميل', type:'textarea'},
       ]},
     callcenter_payments:{ title:'متابعة المتأخرين في السداد', icon:'⏰', roles:['admin','callcenter'],
@@ -1853,6 +1866,7 @@
     else if(state.view==='accommodation') await renderAccommodationSection(page);
     else if(state.view==='trips_hub') await renderTripsHub(page);
     else if(state.view==='winners') await renderWinnersSection(page);
+    else if(state.view==='callcenter_feedback') await renderFeedbackSection(page);
     else if(state.view==='indoor_leads') await renderIndoorLeadsSection(page);
     else if(state.view==='visits') await renderVisitsSection(page);
     else if(state.view==='subscriptions') await renderSubscriptionsSection(page, false);
@@ -3659,6 +3673,218 @@
       });
     }
     return data;
+  }
+
+
+  /* ---------------- آراء عملاء العمرة (رحلات ← عملاء ← تقييم 0-5 + تفاصيل) ----------------
+     كل الداتا في جدول callcenter_feedback:
+       - سجل رحلة:  {kind:'trip', tripName, tripDate}
+       - سجل عميل:  {kind:'client', tripId, tripName, clientName, phone, rating, feedback}
+     المدير بس هو اللي يضيف الرحلات ويرفع الأسماء من الشيت؛ العميل/الكول سنتر بيدوس على التقييم ويكتب التفاصيل. */
+  const toLatinDigits = v => String(v||'').replace(/[٠-٩]/g, d=>'٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/[۰-۹]/g, d=>'۰۱۲۳۴۵۶۷۸۹'.indexOf(d));
+  function fbIsRated(r){ return r && r.rating!==undefined && r.rating!==null && String(r.rating)!==''; }
+  function fbParseClients(text){
+    const out=[], seen=new Set();
+    toLatinDigits(text).split(/\r?\n/).forEach(line=>{
+      line=line.trim(); if(!line) return;
+      const cells=line.split(/\t|,|;|،/).map(c=>c.trim()).filter(Boolean);
+      if(!cells.length) return;
+      const pi=cells.findIndex(c=>/^\+?[\d\s\-]{7,}$/.test(c));
+      if(pi<0 && cells.length>1) return;               // سطر عناوين (الاسم، الرقم…)
+      const phone = pi>=0 ? cells[pi].replace(/[\s\-]/g,'') : '';
+      const name = (pi>=0 ? cells.filter((c,i)=>i!==pi) : cells).join(' ').trim();
+      if(!name) return;
+      const k = phone || name;
+      if(seen.has(k)) return; seen.add(k);
+      out.push({name, phone});
+    });
+    return out;
+  }
+  // جوجل شيت بيشيل الصفر اللي في أول الرقم لو اتخزّن كرقم، فبنرجّعه في العرض بس.
+  function fbPhone(v){ v=String(v||'').trim(); return /^1[0125]\d{8}$/.test(v) ? '0'+v : v; }
+  function fbRateClass(n){ return n<=1?'lo':n<=3?'mid':'hi'; }
+
+  async function renderFeedbackSection(page){
+    await getData('callcenter_feedback');
+    const all = cache.callcenter_feedback || [];
+    const isAdmin = state.user.role==='admin';
+    const trips = all.filter(r=>r.kind==='trip').sort((a,b)=>String(b.tripDate||'').localeCompare(String(a.tripDate||'')));
+    const clients = all.filter(r=>r.kind!=='trip');
+    const looseClients = clients.filter(c=>!c.tripId);
+    const tid = state.fbTripId;
+    if(tid){
+      const trip = tid==='__none' ? {id:'__none', tripName:'عملاء بدون رحلة'} : trips.find(t=>String(t.id)===String(tid));
+      if(trip) return renderFeedbackTrip(page, trip, tid==='__none' ? looseClients : clients.filter(c=>String(c.tripId)===String(tid)), isAdmin);
+      state.fbTripId = null;
+    }
+    const stat = list=>{
+      const rated=list.filter(fbIsRated);
+      const avg = rated.length ? (rated.reduce((a,c)=>a+Number(c.rating),0)/rated.length).toFixed(1) : '—';
+      return {total:list.length, rated:rated.length, avg};
+    };
+    const card = (t, list)=>{
+      const st=stat(list);
+      return `<div class="area-chip click-card" data-fbtrip="${esc(t.id)}">
+        <div class="cnt">📞</div>
+        <div class="nm" style="color:var(--navy-900);font-weight:800;font-size:14px;">عملاء رحلة ${esc(t.tripName||'')}</div>
+        ${t.tripDate?`<div class="nm" style="color:var(--navy-700);font-weight:700;">${esc(fmtDate(t.tripDate))}</div>`:''}
+        <div class="nm">${st.total} عميل • قيّم ${st.rated}</div>
+        <div class="nm">متوسط التقييم: <b>${st.avg}</b></div>
+        ${isAdmin && t.id!=='__none' ? `<button class="icon-btn" data-fbedit="${esc(t.id)}" style="margin-top:6px;">✏️ تعديل</button>
+        <button class="icon-btn del" data-fbdel="${esc(t.id)}" style="margin-top:6px;">🗑️ حذف</button>`:''}
+      </div>`;
+    };
+    page.innerHTML = `
+      <div class="page-head"><h2>📞 آراء عملاء العمرة</h2>
+        ${isAdmin?`<button class="btn-primary btn-gold" id="fb-add-trip" style="width:auto;padding:10px 20px;">+ إضافة رحلة</button>`:''}
+      </div>
+      <div class="assumption-note">اضغط على أي رحلة لعرض عملائها. العميل بيشوف اسمه ورقمه ويختار تقييم من 0 إلى 5 ثم يكتب التفاصيل.</div>
+      <div class="card">
+        ${(trips.length||looseClients.length) ? `<div class="areas-grid">
+          ${trips.map(t=>card(t, clients.filter(c=>String(c.tripId)===String(t.id)))).join('')}
+          ${looseClients.length ? card({id:'__none', tripName:'بدون رحلة'}, looseClients).replace('عملاء رحلة بدون رحلة','عملاء بدون رحلة') : ''}
+        </div>` : `<div class="empty-state"><div class="big">📭</div>لا توجد رحلات بعد${isAdmin?' — ابدأ بإضافة رحلة':''}</div>`}
+      </div>`;
+    page.querySelectorAll('[data-fbtrip]').forEach(el=>el.addEventListener('click', e=>{
+      if(e.target.closest('[data-fbedit]')||e.target.closest('[data-fbdel]')) return;
+      state.fbTripId = el.dataset.fbtrip; render();
+    }));
+    document.getElementById('fb-add-trip')?.addEventListener('click', ()=>openFeedbackTripForm(null));
+    page.querySelectorAll('[data-fbedit]').forEach(b=>b.addEventListener('click', e=>{ e.stopPropagation(); openFeedbackTripForm(b.dataset.fbedit); }));
+    page.querySelectorAll('[data-fbdel]').forEach(b=>b.addEventListener('click', async e=>{
+      e.stopPropagation();
+      if(!confirm('حذف الرحلة وكل عملائها وتقييماتهم؟')) return;
+      const id=b.dataset.fbdel;
+      await apiDeleteMany('callcenter_feedback', clients.filter(c=>String(c.tripId)===String(id)).map(c=>c.id));
+      await apiDelete('callcenter_feedback', id);
+      render();
+    }));
+  }
+
+  function openFeedbackTripForm(id){
+    const row = id ? (cache.callcenter_feedback||[]).find(r=>String(r.id)===String(id)) : null;
+    const bg = document.createElement('div'); bg.className='modal-bg';
+    bg.innerHTML = `<div class="modal"><h3>${id?'تعديل رحلة':'إضافة رحلة'}</h3>
+      <form><div class="form-grid">
+        <div class="field full"><label>اسم الرحلة <span style="color:#c0392b;">*</span></label><input name="tripName" required placeholder="مثال: عمرة رمضان دفعة 1" value="${esc(row?.tripName||'')}"/></div>
+        <div class="field full"><label>تاريخ الرحلة</label><input name="tripDate" type="date" value="${esc(row?.tripDate||'')}"/></div>
+      </div>
+      <div class="modal-actions"><button type="button" class="btn-secondary" id="c">إلغاء</button><button type="submit" class="btn-primary btn-gold">حفظ</button></div></form></div>`;
+    document.body.appendChild(bg);
+    bg.querySelector('#c').addEventListener('click', ()=>bg.remove());
+    bg.addEventListener('click', e=>{ if(e.target===bg) bg.remove(); });
+    bg.querySelector('form').addEventListener('submit', async e=>{
+      e.preventDefault();
+      const guard=submitGuard(e.target); if(!guard.ok) return;
+      try{
+        const fd=new FormData(e.target);
+        const rec={...(row||{}), id:id||uid(), kind:'trip', tripName:String(fd.get('tripName')||'').trim(), tripDate:fd.get('tripDate')||''};
+        if(!rec.tripName) throw new Error('اسم الرحلة مطلوب');
+        if(id){
+          await apiUpdate('callcenter_feedback', rec);
+          // نحدّث اسم الرحلة المنسوخ على عملائها (للتقارير)
+          const kids=(cache.callcenter_feedback||[]).filter(c=>c.kind!=='trip' && String(c.tripId)===String(id));
+          if(kids.length) await apiAddMany('callcenter_feedback', kids.map(c=>({...c, tripName:rec.tripName, tripDate:rec.tripDate})));
+        } else await apiAdd('callcenter_feedback', rec);
+        bg.remove(); render();
+      }catch(err){ alert(err.message||'تعذر الحفظ'); guard.release(); }
+    });
+  }
+
+  function openFeedbackImport(trip){
+    const bg = document.createElement('div'); bg.className='modal-bg';
+    bg.innerHTML = `<div class="modal"><h3>رفع أسماء عملاء رحلة ${esc(trip.tripName||'')}</h3>
+      <form>
+        <div class="assumption-note" style="margin-bottom:12px;">انسخ العمودين (الاسم + الرقم) من الشيت والصقهم هنا، أو اختر ملف CSV/نص. الأسماء المكررة (بنفس الرقم) بتتجاهل.</div>
+        <div class="field"><textarea id="fb-paste" rows="9" placeholder="أحمد محمد	01012345678&#10;منى علي	01123456789"></textarea></div>
+        <div class="field"><input type="file" id="fb-file" accept=".csv,.tsv,.txt,text/plain,text/csv"/></div>
+        <div id="fb-prev" class="assumption-note" style="display:none;"></div>
+        <div class="modal-actions"><button type="button" class="btn-secondary" id="c">إلغاء</button><button type="submit" class="btn-primary btn-gold">رفع الأسماء</button></div>
+      </form></div>`;
+    document.body.appendChild(bg);
+    const ta=bg.querySelector('#fb-paste'), prev=bg.querySelector('#fb-prev');
+    const upd=()=>{ const n=fbParseClients(ta.value).length; prev.style.display=n?'':'none'; prev.textContent=`سيتم رفع ${n} عميل`; };
+    ta.addEventListener('input', upd);
+    bg.querySelector('#fb-file').addEventListener('change', e=>{
+      const f=e.target.files[0]; if(!f) return;
+      const r=new FileReader(); r.onload=()=>{ ta.value=String(r.result||'').replace(/^\uFEFF/,''); upd(); }; r.readAsText(f,'utf-8');
+    });
+    bg.querySelector('#c').addEventListener('click', ()=>bg.remove());
+    bg.addEventListener('click', e=>{ if(e.target===bg) bg.remove(); });
+    bg.querySelector('form').addEventListener('submit', async e=>{
+      e.preventDefault();
+      const guard=submitGuard(e.target); if(!guard.ok) return;
+      try{
+        const list=fbParseClients(ta.value);
+        if(!list.length) throw new Error('لا توجد أسماء صالحة للرفع');
+        const existing=(cache.callcenter_feedback||[]).filter(c=>c.kind!=='trip' && String(c.tripId)===String(trip.id));
+        const have=new Set(existing.map(c=>String(c.phone||'')||String(c.clientName||'')));
+        const recs=list.filter(x=>!have.has(x.phone||x.name)).map(x=>({
+          id:uid(), kind:'client', tripId:trip.id, tripName:trip.tripName||'', tripDate:trip.tripDate||'',
+          clientName:x.name, phone:x.phone, rating:'', feedback:''
+        }));
+        if(!recs.length) throw new Error('كل الأسماء دي موجودة بالفعل في الرحلة');
+        await apiAddMany('callcenter_feedback', recs);
+        bg.remove(); render();
+      }catch(err){ alert(err.message||'تعذر الرفع'); guard.release(); }
+    });
+  }
+
+  function renderFeedbackTrip(page, trip, list, isAdmin){
+    list = list.slice().sort((a,b)=>String(a.clientName||'').localeCompare(String(b.clientName||''),'ar'));
+    const q = (state.fbSearch||'').trim();
+    const shown = q ? list.filter(c=>String(c.clientName||'').includes(q)||String(c.phone||'').includes(q)) : list;
+    const rated=list.filter(fbIsRated);
+    page.innerHTML = `
+      <div class="page-head"><h2>📞 ${trip.id==='__none'?esc(trip.tripName):'عملاء رحلة '+esc(trip.tripName||'')}</h2>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn-secondary" id="fb-back" style="flex:0 0 auto;padding:10px 18px;">← الرحلات</button>
+          ${isAdmin && trip.id!=='__none' ? `<button class="btn-primary btn-gold" id="fb-import" style="width:auto;padding:10px 18px;">⬆️ رفع أسماء من الشيت</button>
+          <button class="btn-secondary" id="fb-addone" style="flex:0 0 auto;padding:10px 18px;">+ عميل</button>`:''}
+        </div>
+      </div>
+      <div class="assumption-note">${list.length} عميل • قيّم ${rated.length}${rated.length?` • المتوسط ${(rated.reduce((a,c)=>a+Number(c.rating),0)/rated.length).toFixed(1)}`:''}</div>
+      <div class="field"><input id="fb-search" placeholder="بحث بالاسم أو الرقم" value="${esc(q)}"/></div>
+      <div id="fb-list">${shown.length ? shown.map(c=>{
+        const r=fbIsRated(c)?Number(c.rating):-1;
+        return `<div class="fb-client" data-id="${esc(c.id)}">
+          <div class="fb-top"><b>${esc(c.clientName)}</b><span class="ph">${esc(fbPhone(c.phone))}</span>
+            ${isAdmin?`<button class="icon-btn del fb-del" style="margin-inline-start:auto;">🗑️</button>`:''}</div>
+          <div class="fb-rate">${[0,1,2,3,4,5].map(n=>`<button type="button" class="fb-star ${r===n?'active '+fbRateClass(n):''}" data-n="${n}">${n}</button>`).join('')}</div>
+          <div class="fb-details" style="${r<0?'display:none;':''}">
+            <textarea rows="3" placeholder="اكتب تفاصيل رأيك هنا">${esc(c.feedback||'')}</textarea>
+            <button type="button" class="btn-secondary fb-save" style="margin-top:8px;padding:8px 18px;flex:none;">حفظ التفاصيل</button>
+          </div></div>`;
+      }).join('') : `<div class="card"><div class="empty-state"><div class="big">📭</div>${list.length?'لا نتائج':'لا يوجد عملاء في الرحلة بعد'+(isAdmin?' — ارفع الأسماء من الشيت':'')}</div></div>`}</div>`;
+    document.getElementById('fb-back').addEventListener('click', ()=>{ state.fbTripId=null; state.fbSearch=''; render(); });
+    document.getElementById('fb-import')?.addEventListener('click', ()=>openFeedbackImport(trip));
+    document.getElementById('fb-addone')?.addEventListener('click', ()=>{
+      const name=(prompt('اسم العميل:')||'').trim(); if(!name) return;
+      const phone=toLatinDigits(prompt('رقم الهاتف:')||'').replace(/[\s\-]/g,'');
+      apiAdd('callcenter_feedback', {id:uid(), kind:'client', tripId:trip.id, tripName:trip.tripName||'', tripDate:trip.tripDate||'', clientName:name, phone, rating:'', feedback:''}).then(()=>render());
+    });
+    document.getElementById('fb-search').addEventListener('input', debounce(e=>{ state.fbSearch=e.target.value; render(); }, 250));
+    if(q){ const si=document.getElementById('fb-search'); si.focus(); si.setSelectionRange(si.value.length, si.value.length); }
+    page.querySelectorAll('.fb-client').forEach(box=>{
+      const rec=()=> (cache.callcenter_feedback||[]).find(x=>String(x.id)===box.dataset.id);
+      box.querySelectorAll('.fb-star').forEach(b=>b.addEventListener('click', async ()=>{
+        const r=rec(); if(!r) return;
+        const n=Number(b.dataset.n);
+        box.querySelectorAll('.fb-star').forEach(x=>x.className='fb-star');
+        b.className='fb-star active '+fbRateClass(n);
+        box.querySelector('.fb-details').style.display='';
+        await apiUpdate('callcenter_feedback', {...r, rating:String(n), ratedAt:todayISO()});
+      }));
+      box.querySelector('.fb-save')?.addEventListener('click', async e=>{
+        const r=rec(); if(!r) return;
+        await apiUpdate('callcenter_feedback', {...r, feedback:box.querySelector('textarea').value});
+        const btn=e.currentTarget; btn.textContent='✔ تم الحفظ'; setTimeout(()=>{ btn.textContent='حفظ التفاصيل'; }, 1500);
+      });
+      box.querySelector('.fb-del')?.addEventListener('click', async ()=>{
+        if(!confirm('حذف العميل؟')) return;
+        await apiDelete('callcenter_feedback', box.dataset.id); render();
+      });
+    });
   }
 
   /* ---------------- Generic module CRUD renderer ---------------- */
