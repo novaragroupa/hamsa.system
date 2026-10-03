@@ -479,7 +479,8 @@
         {key:'tripName', label:'الرحلة', type:'text'},
         {key:'tripDate', label:'تاريخ الرحلة', type:'date'},
         {key:'rating', label:'التقييم', type:'select', options:['0','1','2','3','4','5']},
-        {key:'feedback', label:'رأي العميل', type:'textarea'},
+        {key:'callDate', label:'تاريخ المكالمة', type:'date'},
+        {key:'feedback', label:'ملاحظات', type:'textarea'},
       ]},
     callcenter_payments:{ title:'متابعة المتأخرين في السداد', icon:'⏰', roles:['admin','callcenter'],
       fields:[
@@ -3641,7 +3642,7 @@
      المحدد لها حقل تاريخ: المهتمون والمندوبون، آراء عملاء العمرة، الاشتراكات ---------------- */
   const MODULE_DATE_FILTER_FIELD = {
     indoor_leads: 'registrationDate',
-    callcenter_feedback: 'tripDate',
+    callcenter_feedback: 'callDate',
     subscriptions: 'subscriptionDate'
   };
   function applyModuleDateFilter(data, dateFieldKey, filter){
@@ -3852,8 +3853,12 @@
             ${isAdmin?`<button class="icon-btn del fb-del" style="margin-inline-start:auto;">🗑️</button>`:''}</div>
           <div class="fb-rate">${[0,1,2,3,4,5].map(n=>`<button type="button" class="fb-star ${r===n?'active '+fbRateClass(n):''}" data-n="${n}">${n}</button>`).join('')}</div>
           <div class="fb-details" style="${r<0?'display:none;':''}">
-            <textarea rows="3" placeholder="اكتب تفاصيل رأيك هنا">${esc(c.feedback||'')}</textarea>
-            <button type="button" class="btn-secondary fb-save" style="margin-top:8px;padding:8px 18px;flex:none;">حفظ التفاصيل</button>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+              <label style="font-size:13px;font-weight:600;color:var(--navy-800);">📅 تاريخ المكالمة</label>
+              <input type="date" class="fb-date" value="${esc(c.callDate||'')}" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--sand-50);"/>
+            </div>
+            <textarea rows="3" placeholder="ملاحظات">${esc(c.feedback||'')}</textarea>
+            <button type="button" class="btn-secondary fb-save" style="margin-top:8px;padding:8px 18px;flex:none;">حفظ</button>
           </div></div>`;
       }).join('') : `<div class="card"><div class="empty-state"><div class="big">📭</div>${list.length?'لا نتائج':'لا يوجد عملاء في الرحلة بعد'+(isAdmin?' — ارفع الأسماء من الشيت':'')}</div></div>`}</div>`;
     document.getElementById('fb-back').addEventListener('click', ()=>{ state.fbTripId=null; state.fbSearch=''; render(); });
@@ -3873,12 +3878,13 @@
         box.querySelectorAll('.fb-star').forEach(x=>x.className='fb-star');
         b.className='fb-star active '+fbRateClass(n);
         box.querySelector('.fb-details').style.display='';
-        await apiUpdate('callcenter_feedback', {...r, rating:String(n), ratedAt:todayISO()});
+        const di=box.querySelector('.fb-date'); if(!di.value) di.value=todayISO();
+        await apiUpdate('callcenter_feedback', {...r, rating:String(n), callDate:di.value});
       }));
       box.querySelector('.fb-save')?.addEventListener('click', async e=>{
         const r=rec(); if(!r) return;
-        await apiUpdate('callcenter_feedback', {...r, feedback:box.querySelector('textarea').value});
-        const btn=e.currentTarget; btn.textContent='✔ تم الحفظ'; setTimeout(()=>{ btn.textContent='حفظ التفاصيل'; }, 1500);
+        await apiUpdate('callcenter_feedback', {...r, feedback:box.querySelector('textarea').value, callDate:box.querySelector('.fb-date').value});
+        const btn=e.currentTarget; btn.textContent='✔ تم الحفظ'; setTimeout(()=>{ btn.textContent='حفظ'; }, 1500);
       });
       box.querySelector('.fb-del')?.addEventListener('click', async ()=>{
         if(!confirm('حذف العميل؟')) return;
