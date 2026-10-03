@@ -434,7 +434,7 @@
         {key:'registrationDate', label:'تاريخ التسجيل', type:'date', required:true},
         {key:'type', label:'النوع', type:'select', options:['مهتم','مندوب']},
         {key:'company', label:'الشركة', type:'dynamicSelect', ref:'visits', refField:'companyName'},
-        {key:'status', label:'الحالة', type:'select', options:['جديد','تم التواصل','تحويل لحجز','مشترك']},
+        {key:'status', label:'الحالة', type:'select', options:['جديد','تم التواصل','مشترك']},
         {key:'gender', label:'جنس العميل', type:'select', options:['ذكر','أنثى'], showWhenSubscribed:true},
         {key:'omegaCode', label:'كود أوميجا', type:'text', showWhenSubscribed:true},
         {key:'paymentDate', label:'تاريخ الدفع', type:'date', showWhenSubscribed:true},
@@ -445,7 +445,7 @@
         {key:'installmentMonths', label:'عدد شهور التقسيط (اختياري)', type:'number', showWhenSubscribed:true, optionalWhenSubscribed:true},
         {key:'downPayment', label:'المقدم (اختياري)', type:'number', showWhenSubscribed:true, optionalWhenSubscribed:true},
         {key:'sourceType', label:'وصل عن طريق', type:'select', starForInterested:true,
-          options:['مندوب','علاقات عامة','الاستقبال','الإعلام']},
+          options:['مندوب','سيلز','الاستقبال','ميديا']},
         {key:'responsiblePerson', label:'اسم المسؤول عنه', type:'dynamicSelect', ref:'employees', refField:'name', starForInterested:true},
         {key:'managerRep', label:' تحت إشراف مندوب', type:'dynamicSelect',
           ref:'indoor_leads', refField:'name', filter:{field:'type', value:'مندوب'}},
@@ -1769,7 +1769,7 @@
     // تبقى أسهل في التصفح وأكثر تنظيمًا مع زيادة عدد الأقسام حسب الصلاحية.
     const groups = { main:[], pr:[], ops:[], admin:[] };
     groups.main.push(`<button class="nav-item ${state.view==='dashboard'?'active':''}" data-view="dashboard">🏠<span>الرئيسية</span></button>`);
-    groups.main.push(`<button class="nav-item ${state.view==='analytics'?'active':''}" data-view="analytics">📊<span>تحليل البيانات</span></button>`);
+    groups.main.push(`<button class="nav-item ${state.view==='analytics'?'active':''}" data-view="analytics">📊<span>تقارير الأداء</span></button>`);
     if(isPRUser()){
       groups.pr.push(`<button class="nav-item ${state.view==='pr_teams'?'active':''}" data-view="pr_teams">🧩<span>${state.user.role==='pr_member'?'بياناتي':'فرق العلاقات العامة'}</span></button>`);
     }
@@ -2742,7 +2742,7 @@
 
     page.innerHTML = `
       <div class="page-head">
-        <h2>📊 تحليل البيانات</h2>
+        <h2>📊 تقارير الأداء</h2>
         ${readOnly ? '' : `<button class="btn-primary btn-gold" id="new-board-btn" style="width:auto;padding:10px 20px;">+ لوحة جديدة</button>`}
       </div>
       ${myBoards.length? `<div class="board-tabs">${boardTabs}</div>` : ''}
@@ -4542,7 +4542,10 @@
   }
 
   function renderField(f, row, refOptions){
-    const val = row? (row[f.key]||'') : '';
+    let val = row? (row[f.key]||'') : '';
+    // توافق مع السجلات القديمة بعد إعادة التسمية / حذف الحالة
+    if(f.key==='sourceType'){ if(val==='علاقات عامة') val='سيلز'; else if(val==='الإعلام') val='ميديا'; }
+    if(f.key==='status' && val==='تحويل لحجز' && f.options && !f.options.includes(val)) val='تم التواصل';
     const full = (f.type==='textarea'||f.type==='image'||f.type==='followups') ? 'full':'';
     let inner = '';
     if(f.type==='select'){
