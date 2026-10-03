@@ -3683,6 +3683,8 @@
        - سجل عميل:  {kind:'client', tripId, tripName, clientName, phone, rating, feedback}
      المدير بس هو اللي يضيف الرحلات ويرفع الأسماء من الشيت؛ العميل/الكول سنتر بيدوس على التقييم ويكتب التفاصيل. */
   const toLatinDigits = v => String(v||'').replace(/[٠-٩]/g, d=>'٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/[۰-۹]/g, d=>'۰۱۲۳۴۵۶۷۸۹'.indexOf(d));
+  // أي حد شغال في القسم (أدمن / كول سنتر / عنده صلاحية إضافة) له نفس صلاحيات المدير هنا.
+  function fbCanManage(){ return ['admin','callcenter'].includes(state.user.role) || hasPerm('callcenter_feedback','add')===true || hasPerm('callcenter_feedback','edit')===true; }
   function fbIsRated(r){ return r && r.rating!==undefined && r.rating!==null && String(r.rating)!==''; }
   function fbParseClients(text){
     const out=[], seen=new Set();
@@ -3708,7 +3710,7 @@
   async function renderFeedbackSection(page){
     await getData('callcenter_feedback');
     const all = cache.callcenter_feedback || [];
-    const isAdmin = state.user.role==='admin';
+    const isAdmin = fbCanManage();
     const trips = all.filter(r=>r.kind==='trip').sort((a,b)=>String(b.tripDate||'').localeCompare(String(a.tripDate||'')));
     const clients = all.filter(r=>r.kind!=='trip');
     const looseClients = clients.filter(c=>!c.tripId);
