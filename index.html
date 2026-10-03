@@ -1422,7 +1422,7 @@
   // طبّع الاسم للمقارنة (نفس normName في Code.gs): يشيل التشكيل، يوحّد الألف والياء، ويدمج المسافات.
   function normName(v){
     return String(v||'').replace(/[\u064B-\u065F\u0670\u0640]/g,'').replace(/[\u0622\u0623\u0625]/g,'\u0627')
-      .replace(/\u0649/g,'\u064A').replace(/[\u00A0\s]+/g,' ').trim().toLowerCase();
+      .replace(/\u0649/g,'\u064A').replace(/\u0629/g,'\u0647').replace(/[\u00A0\s]+/g,' ').trim().toLowerCase();
   }
   function sameName(a,b){ const x=normName(a); return !!x && x===normName(b); }
   function currentEmployee(){
@@ -2485,7 +2485,7 @@
   async function employeeTeamMap(){
     const emps = await getData('employees');
     const map = {};
-    emps.forEach(e=>{ if(e.name) map[e.name] = e.team || 'بدون فريق'; });
+    emps.forEach(e=>{ if(e.name){ map[e.name] = e.team || 'بدون فريق'; map[normName(e.name)] = e.team || 'بدون فريق'; } });
     return map;
   }
 
@@ -2493,7 +2493,7 @@
     if(dimKey.endsWith('__team')){
       const base = dimKey.slice(0, -('__team'.length));
       const person = row[base];
-      return (person && teamMap[person]) || 'بدون فريق';
+      return (person && (teamMap[person] || teamMap[normName(person)])) || 'بدون فريق';
     }
     return row[dimKey] || 'غير محدد';
   }
@@ -2503,29 +2503,36 @@
       const total = metric==='sum'? rows.reduce((s,r)=>s+num_(r[metricField]),0) : rows.length;
       return [{label:'الإجمالي', value: total}];
     }
-    const map = {};
+    const map = {}, labels = {};
     rows.forEach(r=>{
-      const g = dimValue(r, dimKey, teamMap);
-      if(!(g in map)) map[g]=0;
+      const g0 = dimValue(r, dimKey, teamMap), g = normName(g0) || g0;
+      if(!(g in map)){ map[g]=0; labels[g]=g0; }
       map[g] += (metric==='sum') ? num_(r[metricField]) : 1;
     });
-    return Object.entries(map).map(([k,v])=>({label:k, value:v})).sort((a,b)=>b.value-a.value);
+    return Object.entries(map).map(([k,v])=>({label:labels[k], value:v})).sort((a,b)=>b.value-a.value);
   }
 
   /* تقسيم مزدوج (Pivot): صفوف = التقسيم الأساسي (مثلًا الموظف)، أعمدة = التقسيم الفرعي (مثلًا نوع الباقة).
      مثال: محمد — عمرة تيسير: 2 | عمرة كاش: 5 | الإجمالي: 7 */
   function groupPivot(rows, dimKey, subKey, metric, metricField, teamMap){
-    const map = {}, colTotals = {};
+    const map = {}, gLab = {}, cLab = {}; let colTotals = {};
     rows.forEach(r=>{
-      const g = dimValue(r, dimKey, teamMap), c = dimValue(r, subKey, teamMap);
+      const g0 = dimValue(r, dimKey, teamMap), c0 = dimValue(r, subKey, teamMap);
+      const g = normName(g0) || g0, c = normName(c0) || c0;
+      if(!(g in gLab)) gLab[g] = g0;
+      if(!(c in cLab)) cLab[c] = c0;
       const v = (metric==='sum') ? num_(r[metricField]) : 1;
       (map[g] = map[g] || {total:0, cells:{}});
       map[g].cells[c] = (map[g].cells[c]||0) + v;
       map[g].total += v;
       colTotals[c] = (colTotals[c]||0) + v;
     });
-    const cols = Object.keys(colTotals).sort((a,b)=>colTotals[b]-colTotals[a]);
-    const list = Object.entries(map).map(([label,o])=>({label, cells:o.cells, total:o.total})).sort((a,b)=>b.total-a.total);
+    const colKeys = Object.keys(colTotals).sort((a,b)=>colTotals[b]-colTotals[a]);
+    const cols = colKeys.map(k=>cLab[k]);
+    const cellsByLabel = o=>{ const x={}; colKeys.forEach(k=>{ if(o.cells[k]) x[cLab[k]]=o.cells[k]; }); return x; };
+    const list = Object.entries(map).map(([k,o])=>({label:gLab[k], cells:cellsByLabel(o), total:o.total})).sort((a,b)=>b.total-a.total);
+    const colTotalsL = {}; colKeys.forEach(k=>{ colTotalsL[cLab[k]] = colTotals[k]; });
+    colTotals = colTotalsL;
     return {cols, rows:list, colTotals, grand:list.reduce((s,r)=>s+r.total,0)};
   }
   function renderPivotTable(p){
@@ -3683,11 +3690,11 @@
       const myTeam = emp?.team || '';
       if(myTeam){
         const employees = await getData('employees');
-        const teamNames = new Set(employees.filter(e=>e.team===myTeam).map(e=>e.name));
-        data = data.filter(r=> teamNames.has(r.visitedBy));
+        const teamNames = new Set(employees.filter(e=>e.team===myTeam).map(e=>normName(e.name)));
+        data = data.filter(r=> teamNames.has(normName(r.visitedBy)));
       } else {
         const myName = emp?.name || state.user.name;
-        data = data.filter(r=> r.visitedBy===myName);
+        data = data.filter(r=> sameName(r.visitedBy, myName));
       }
     }
 
