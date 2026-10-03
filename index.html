@@ -1452,6 +1452,8 @@
     return { has:v=>s.has(normName(v)), get size(){ return s.size; } };
   }
   async function filterPRData(key,data){
+    // لو الأدمن حدد نطاق رؤية للموظف في القسم ده، السيرفر بيطبّقه وبيبعت الصفوف المسموحة بس.
+    if(hasScope(key)) return data;
     if(!isPRUser()) return data;
     if(state.user.role==='pr_manager') return data;
     const emp=await currentEmployeeFresh();
@@ -1475,7 +1477,7 @@
     return data;
   }
   function prCanEditRow(key,row){
-    { const ov = hasPerm(key, row&&row.id ? 'edit' : 'add'); if(ov!==null) return ov; }
+    { const ov = hasPerm(key, row&&row.id ? 'edit' : 'add'); if(ov!==null) return ov && !scopeBlocksRow(key,row); }
     // عرض فقط: التسكين والحسابات بقى يقدروا يشوفوا الاشتراكات/الفائزين، بس
     // مايقدروش يضيفوا أو يعدلوا أو يحذفوا فيهم — باقي صلاحياتهم (زي التسكين
     // والرحلات) متغيرتش خالص.
@@ -1505,6 +1507,8 @@
   }
   async function canAccessVisits(){
     if(state.user.role==='admin') return true;
+    // تخصيص "عرض" من صفحة الصلاحيات بيتغلّب على شرط "قائد فريق أوت دور".
+    { const ov = hasPerm('visits','view'); if(ov!==null) return ov; }
     if(state.user.role!=='pr_out') return false;
     return await isTeamLeader();
   }
@@ -1711,7 +1715,23 @@
     const v = hasPerm(key,'view');
     return v===null ? m.roles.includes(state.user.role) : v;
   }
-  function prCanDelete(key,row){ const ov=hasPerm(key,'delete'); return ov!==null ? ov : prCanEditRow(key,row); }
+  /* نطاق الرؤية لكل قسم (كل الموظفين / الفريق / بتاعه بس) — بيتحدد من صفحة الصلاحيات ويتطبّق في السيرفر كمان.
+     null = مفيش تخصيص → السلوك القديم حسب الدور. */
+  const SCOPE_FIELD = {subscriptions:'responsiblePerson', indoor_leads:'responsiblePerson', pr_member_data:'memberId', visits:'visitedBy'};
+  const SCOPE_LABELS = {all:'كل الموظفين', team:'فريقه فقط', own:'بتاعه هو بس'};
+  function hasScope(key){
+    if(!state.user || state.user.role==='admin' || !SCOPE_FIELD[key]) return null;
+    const p = permMap(permRecordFor(currentEmployee()))[key];
+    const s = p ? p.scope : '';
+    return (s==='all'||s==='team'||s==='own') ? s : null;
+  }
+  // نطاق "بتاعه بس": سجل مش بتاعه (زي المشترك المربوط برحلة) ما ينفعش يتعدّل/يتحذف.
+  function scopeBlocksRow(key,row){
+    if(hasScope(key)!=='own' || !row || !row.id) return false;
+    const me = currentEmployee()?.name || state.user.name;
+    return !sameName(row[SCOPE_FIELD[key]], me);
+  }
+  function prCanDelete(key,row){ const ov=hasPerm(key,'delete'); if(ov!==null) return ov && !scopeBlocksRow(key,row); return prCanEditRow(key,row); }
   function accessibleModules(){
     return Object.entries(MODULES).filter(([k])=>!PERM_HIDDEN.includes(k) && canViewModule(k));
   }
@@ -1859,9 +1879,11 @@
     const rec = permRecordFor(emp);
     const roleOf = e=>Object.keys(ROLE_LABELS).find(k=>ROLE_LABELS[k]===e.department)||'';
     const rk = emp ? roleOf(emp) : '';
+    // نطاق الرؤية الافتراضي حسب الدور (نفس السلوك الحالي): عضو فريق = بتاعه، قائد = فريقه، الباقي = الكل.
+    const roleScopeDef = (k,role)=> !SCOPE_FIELD[k] ? '' : (k==='visits' ? 'team' : role==='pr_member' ? 'own' : role==='pr_leader' ? 'team' : 'all');
     const roleDef = (k,m,role)=>{ const v=m.roles.includes(role); const vo=k==='subscriptions' && ['accommodation','accounting'].includes(role);
-      return {view:v, add:v&&k!=='subscriptions', edit:v&&!vo, delete:v&&!vo}; };
-    const effFor = (e,k,m)=>{ const sv=permMap(permRecordFor(e))[k]; return sv ? {view:!!sv.view,add:!!sv.add,edit:!!sv.edit,delete:!!sv.delete} : roleDef(k,m,roleOf(e)); };
+      return {view:v, add:v&&k!=='subscriptions', edit:v&&!vo, delete:v&&!vo, scope:roleScopeDef(k,role)}; };
+    const effFor = (e,k,m)=>{ const sv=permMap(permRecordFor(e))[k]; return sv ? {view:!!sv.view,add:!!sv.add,edit:!!sv.edit,delete:!!sv.delete, scope:SCOPE_FIELD[k]?(sv.scope||roleScopeDef(k,roleOf(e))):''} : roleDef(k,m,roleOf(e)); };
     const secs = permSections();
     const GL = {...GROUP_LABELS, other:'أقسام أخرى'};
     const groups = {}; secs.forEach(([k,m])=>{ const g=MODULE_GROUP_OF[k]||'other'; (groups[g]=groups[g]||[]).push([k,m]); });
@@ -1871,11 +1893,15 @@
     const customCount = rec ? Object.keys(permMap(rec)).length : 0;
 
     const editable = emp && rk && rk!=='admin';
-    const rowsHtml = editable ? gOrder.map(g=>`<tr class="pm-grp"><td colspan="6">${esc(GL[g])}</td></tr>` + groups[g].map(([k,m])=>{
+    const rowsHtml = editable ? gOrder.map(g=>`<tr class="pm-grp"><td colspan="7">${esc(GL[g])}</td></tr>` + groups[g].map(([k,m])=>{
       const c = effFor(emp,k,m), d = roleDef(k,m,rk);
+      const scopeCell = SCOPE_FIELD[k]
+        ? `<td class="pm-scope" style="text-align:center;"><select data-sk="${k}" data-sdef="${d.scope}" data-sinit="${c.scope}" style="padding:6px 8px;border:1px solid var(--line);border-radius:8px;font-family:inherit;background:var(--sand-50);">${Object.entries(SCOPE_LABELS).map(([v,l])=>`<option value="${v}" ${c.scope===v?'selected':''}>${l}</option>`).join('')}</select></td>`
+        : `<td style="text-align:center;color:var(--muted);">—</td>`;
       return `<tr data-row="${k}"><td style="font-weight:700;">${m.icon} ${esc(m.title)} <span class="badge gold pm-tag" style="display:none;">معدّل</span></td>
         ${PERM_ACTIONS.map(([a])=>{ const dis = (k==='subscriptions' && a==='add');
           return `<td class="pm-cell" style="text-align:center;"><input type="checkbox" data-k="${k}" data-a="${a}" data-def="${d[a]?1:0}" data-init="${c[a]&&!dis?1:0}" ${c[a]&&!dis?'checked':''} ${dis?'disabled title="إضافة الاشتراكات تلقائية من تحويل المهتم لمشترك"':''} style="width:18px;height:18px;"></td>`; }).join('')}
+        ${scopeCell}
         <td style="text-align:center;"><button class="icon-btn" data-rowall="${k}">الكل</button></td></tr>`;
     }).join('')).join('') : '';
 
@@ -1916,8 +1942,8 @@
         <div id="perm-summary" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;"></div>
         <div class="table-wrap"><table><thead><tr><th>القسم</th>
           ${PERM_ACTIONS.map(([a,l])=>`<th style="text-align:center;">${ACT_ICON[a]} ${l}<br><input type="checkbox" data-col="${a}" title="تحديد/إلغاء العمود كله" style="width:16px;height:16px;margin-top:4px;"></th>`).join('')}
-          <th></th></tr></thead><tbody>${rowsHtml}</tbody></table></div>
-        <div style="margin-top:10px;font-size:12.5px;color:var(--muted);">الخلفية الذهبية = مختلف عن صلاحية الدور الافتراضية. تفعيل أي إذن يفعّل «عرض» تلقائيًا، وإلغاء «عرض» يلغي باقي الأذونات. التعديل والحذف ينطبقان على السجلات التي يراها الموظف في القسم.</div>
+          <th style="text-align:center;">🔭 يشوف بيانات مين؟</th><th></th></tr></thead><tbody>${rowsHtml}</tbody></table></div>
+        <div style="margin-top:10px;font-size:12.5px;color:var(--muted);">الخلفية الذهبية = مختلف عن صلاحية الدور الافتراضية. تفعيل أي إذن يفعّل «عرض» تلقائيًا، وإلغاء «عرض» يلغي باقي الأذونات. التعديل والحذف ينطبقان على السجلات التي يراها الموظف في القسم.<br>🔭 عمود «يشوف بيانات مين؟» (المهتمون والمندوبون، الاشتراكات، البيانات والأرقام والروابط، تقارير الزيارات): يحدد هل يرى الموظف سجلات كل الموظفين، أو فريقه فقط، أو سجلاته هو فقط — ويُطبَّق من السيرفر على العرض والتعديل والحذف. قسم «الفائزون» يتبع نطاق الاشتراكات.</div>
         <div class="pm-bar"><span id="perm-state" style="font-weight:700;"></span>
           <span style="display:flex;gap:8px;flex-wrap:wrap;">
             ${rec?`<button class="icon-btn del" id="perm-reset">↩️ إلغاء التخصيص</button>`:''}
@@ -1930,6 +1956,8 @@
 
     const boxes = [...page.querySelectorAll('input[data-k]')];
     const box = (k,a)=>boxes.find(x=>x.dataset.k===k && x.dataset.a===a);
+    const sels = [...page.querySelectorAll('select[data-sk]')];
+    const sel = k=>sels.find(x=>x.dataset.sk===k);
     const setVal = (k,a,val)=>{
       const b = box(k,a); if(!b || b.disabled) return;
       if(a==='view'){ b.checked = val; if(!val) ['add','edit','delete'].forEach(x=>{ const o=box(k,x); if(o) o.checked=false; }); }
@@ -1941,9 +1969,11 @@
         b.closest('td').classList.toggle('pm-diff', (b.checked?1:0)!==Number(b.dataset.def)); });
       page.querySelectorAll('tr[data-row]').forEach(tr=>{
         const bs = boxes.filter(b=>b.dataset.k===tr.dataset.row);
-        tr.querySelector('.pm-tag').style.display = bs.some(b=>(b.checked?1:0)!==Number(b.dataset.def)) ? '' : 'none';
-        if(bs.some(b=>(b.checked?1:0)!==Number(b.dataset.init))) dirty++;
+        const s = sel(tr.dataset.row);
+        tr.querySelector('.pm-tag').style.display = (bs.some(b=>(b.checked?1:0)!==Number(b.dataset.def)) || (s && s.value!==s.dataset.sdef)) ? '' : 'none';
+        if(bs.some(b=>(b.checked?1:0)!==Number(b.dataset.init)) || (s && s.value!==s.dataset.sinit)) dirty++;
       });
+      sels.forEach(s=>{ s.disabled = !box(s.dataset.sk,'view').checked; s.closest('td').classList.toggle('pm-diff', s.value!==s.dataset.sdef); });
       page.querySelectorAll('input[data-col]').forEach(h=>{ const bs=boxes.filter(b=>b.dataset.a===h.dataset.col && !b.disabled); h.checked = bs.length>0 && bs.every(b=>b.checked); });
       document.getElementById('perm-summary').innerHTML = [['view','يشوف'],['add','يضيف في'],['edit','يعدّل في'],['delete','يحذف من']]
         .map(([a,l])=>`<span class="pm-chip">${ACT_ICON[a]} ${l} ${cnt[a]} ${cnt[a]===1?'قسم':'أقسام'}</span>`).join('');
@@ -1952,16 +1982,17 @@
       document.getElementById('perm-undo').style.display = dirty ? '' : 'none';
     };
     boxes.forEach(b=>b.addEventListener('change', ()=>{ setVal(b.dataset.k, b.dataset.a, b.checked); refresh(); }));
+    sels.forEach(s=>s.addEventListener('change', refresh));
     page.querySelectorAll('input[data-col]').forEach(h=>h.addEventListener('change', ()=>{
       secs.forEach(([k])=>setVal(k, h.dataset.col, h.checked)); refresh(); }));
     page.querySelectorAll('[data-rowall]').forEach(b=>b.addEventListener('click', ()=>{
       const k=b.dataset.rowall; const all = PERM_ACTIONS.every(([a])=>{ const x=box(k,a); return x.disabled || x.checked; });
       PERM_ACTIONS.forEach(([a])=>setVal(k,a,!all)); refresh(); }));
-    const applyMap = fn=>{ secs.forEach(([k,m])=>{ const c=fn(k,m); PERM_ACTIONS.forEach(([a])=>{ const b=box(k,a); if(b && !b.disabled) b.checked=!!c[a]; }); setVal(k,'view',!!c.view); PERM_ACTIONS.forEach(([a])=>{ if(a!=='view') setVal(k,a,!!c[a]&&!!c.view); }); }); refresh(); };
+    const applyMap = fn=>{ secs.forEach(([k,m])=>{ const c=fn(k,m); const sc=sel(k); if(sc && c.scope) sc.value=c.scope; PERM_ACTIONS.forEach(([a])=>{ const b=box(k,a); if(b && !b.disabled) b.checked=!!c[a]; }); setVal(k,'view',!!c.view); PERM_ACTIONS.forEach(([a])=>{ if(a!=='view') setVal(k,a,!!c[a]&&!!c.view); }); }); refresh(); };
     page.querySelectorAll('[data-preset]').forEach(b=>b.addEventListener('click', ()=>{
       const t=b.dataset.preset;
       if(t==='role') applyMap((k,m)=>roleDef(k,m,rk));
-      else if(t==='all') applyMap(()=>({view:true,add:true,edit:true,delete:true}));
+      else if(t==='all') applyMap(()=>({view:true,add:true,edit:true,delete:true,scope:'all'}));
       else if(t==='none') applyMap(()=>({view:false,add:false,edit:false,delete:false}));
       else if(t==='viewonly') applyMap(k=>({view:box(k,'view').checked,add:false,edit:false,delete:false}));
     }));
@@ -1976,7 +2007,9 @@
       const map = {};
       secs.forEach(([k,m])=>{ const d=roleDef(k,m,rk); const cur={};
         PERM_ACTIONS.forEach(([a])=>{ cur[a]=!!box(k,a).checked; });
-        if(PERM_ACTIONS.some(([a])=>cur[a]!==!!d[a])) map[k]=cur; });
+        const s = sel(k); const scopeDiff = !!s && s.value!==d.scope;
+        if(scopeDiff) cur.scope = s.value;
+        if(scopeDiff || PERM_ACTIONS.some(([a])=>cur[a]!==!!d[a])) map[k]=cur; });
       if(!Object.keys(map).length){ if(rec) await apiDelete('user_permissions', rec.id); }
       else await apiAdd('user_permissions', {
         id:'perm_'+emp.id, employeeId:emp.id, employeeName:emp.name, username:emp.username||'', team:normTeam(emp.team),
@@ -3601,7 +3634,7 @@
       data = data.filter(r => !options.excludeWhere(r));
     }
 
-    if(key==='visits' && state.user.role!=='admin'){
+    if(key==='visits' && state.user.role!=='admin' && !hasScope('visits')){
       const emp = await currentEmployeeFresh();
       const myTeam = emp?.team || '';
       if(myTeam){
@@ -4134,7 +4167,10 @@
         if(key==='visits' && f.key==='visitedBy' && state.user.role!=='admin'){
           const emp = await currentEmployeeFresh();
           const myTeam = emp?.team || '';
-          refList = myTeam ? refList.filter(r=>r.team===myTeam) : refList.filter(r=>r.name===(emp?.name||state.user.name));
+          const vsc = hasScope('visits');
+          if(vsc==='all'){ /* كل الموظفين */ }
+          else if(vsc==='own') refList = refList.filter(r=>sameName(r.name, emp?.name||state.user.name));
+          else refList = myTeam ? refList.filter(r=>r.team===myTeam) : refList.filter(r=>r.name===(emp?.name||state.user.name));
         }
         // dedupe: لو المرجع فيه أكتر من صف بنفس القيمة (زي جدول الزيارات اللي
         // كل زيارة سجل لوحده)، منعرضش نفس القيمة أكتر من مرة في القائمة.
