@@ -1466,16 +1466,10 @@
       const team=await prTeamName();
       return data.filter(r=>normTeam(r.name)===team);
     }
-    if(key==='indoor_leads' || key==='indoor_data' || key==='subscriptions'){
-      return data.filter(r=>{
-        // مشترك اتضاف على رحلة = ظاهر للكل (عرض فقط)، غير كده بيتفلتر بالمسؤول/الفريق
-        if(key==='subscriptions' && String(r.tripId||'').trim()) return true;
-        return teamNames.has(r.responsiblePerson) && (state.user.role==='pr_leader' || sameName(r.responsiblePerson,myName));
-      });
-    }
-    if(key==='pr_member_data'){
-      return data.filter(r=>teamNames.has(r.memberId) && (state.user.role==='pr_leader' || sameName(r.memberId,myName)));
-    }
+    // السيرفر هو اللي بيفلتر الصفوف حسب الشخص/الفريق/النطاق قبل ما يبعتها، فالصفوف اللي وصلت
+    // للمتصفح هي المسموحة بالفعل. فلتر المتصفح التاني كان بيعتمد على مطابقة اسم/فريق الموظف
+    // محليًا، ولو فيه أي اختلاف بسيط (اسم مستخدم، فريق، كتابة الاسم) كان بيخفي كل بيانات الموظف (0).
+    if(['indoor_leads','indoor_data','subscriptions','pr_member_data'].includes(key)) return data;
     return data;
   }
   function prCanEditRow(key,row){
