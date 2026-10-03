@@ -349,6 +349,55 @@ function permOverride(session, table, action) {
   return null;
 }
 
+/* ---------------- نطاق الرؤية (scope) لكل قسم ----------------
+ * الأدمن بيحدد من صفحة "الصلاحيات" لكل موظف وكل قسم: يشوف سجلات كل الموظفين ('all')،
+ * أو فريقه بس ('team')، أو سجلاته هو بس ('own'). بيتخزن جوه perms[<القسم>].scope.
+ * لو مفيش scope محفوظ → بيفضل السلوك القديم حسب الدور زي ما هو بالظبط.
+ * الحقل اللي بيحدد صاحب السجل لكل جدول: */
+const SCOPE_OWNER_FIELD = {
+  subscriptions: 'responsiblePerson',
+  indoor_leads: 'responsiblePerson',
+  pr_member_data: 'memberId',
+  visits: 'visitedBy'
+};
+
+// 'all' | 'team' | 'own' | null (null = مفيش تخصيص، استخدم سلوك الدور)
+function permScope(session, table) {
+  if (!session || String(session.role || '') === 'admin') return null;
+  if (!SCOPE_OWNER_FIELD[table]) return null;
+  if (!session.employeeId) return null;
+  const rec = getCachedRows('user_permissions').find(function(r){
+    return String(r.employeeId || '') === String(session.employeeId || '');
+  });
+  if (!rec) return null;
+  const p = parsePermsField(rec.perms)[permModuleKeysForTable(table)[0]];
+  const s = p ? String(p.scope || '') : '';
+  return (s === 'all' || s === 'team' || s === 'own') ? s : null;
+}
+
+// الأسماء (مُطبَّعة) اللي المستخدم مسموحله يشوف سجلاتها حسب النطاق. 'team' بيعني فريقه هو
+// حتى لو دوره pr_manager. لو مفيش فريق للموظف بنرجع لسجلاته هو بس (مش كل الناس اللي من غير فريق).
+function scopeNamesForSession(session, scope) {
+  const me = normName(sessionOwnName(session));
+  const names = me ? [me] : [];
+  if (scope !== 'team') return names;
+  const team = sessionOwnTeam(session);
+  if (!team) return names;
+  getCachedRows('employees').forEach(function(e){
+    if (normTeam(e.team) === team && e.status !== 'inactive') {
+      const n = normName(e.name);
+      if (n && names.indexOf(n) < 0) names.push(n);
+    }
+  });
+  return names;
+}
+
+function rowInScope(session, table, row, scope) {
+  if (scope === 'all') return true;
+  const owner = normName((row || {})[SCOPE_OWNER_FIELD[table]]);
+  return !!owner && scopeNamesForSession(session, scope).indexOf(owner) >= 0;
+}
+
 function isTableReadAllowed(session, table) {
   if (String(session.role || '') !== 'admin') {
     const ov = permOverride(session, table, 'view');
@@ -921,6 +970,19 @@ function filterRowsForSession(rows, table, session) {
     return rows.filter(function(r){ return ids[String(r.dashboardId || '')]; });
   }
 
+  // نطاق الرؤية المخصّص من صفحة "الصلاحيات" بيتغلّب على السلوك الافتراضي للدور.
+  const scope = permScope(session, table);
+  if (scope) {
+    if (scope === 'all') return rows;
+    const scopeNames = scopeNamesForSession(session, scope);
+    const ownerField = SCOPE_OWNER_FIELD[table];
+    return rows.filter(function(r){
+      // المشترك اللي اتضاف على رحلة بيفضل ظاهر (عرض فقط) زي السلوك القديم.
+      if (table === 'subscriptions' && String(r.tripId || '').trim()) return true;
+      return scopeNames.indexOf(normName(r[ownerField])) >= 0;
+    });
+  }
+
   if (!isPRRole(session.role)) return rows;
 
   if (session.role === 'pr_manager') return rows;
@@ -994,6 +1056,10 @@ function rowBelongsToSession(session, table, row) {
 
   // سجل التعديلات ما يتعدّلش ولا يتمسح بعد ما يتسجل (غير للأدمن).
   if (table === 'edit_logs') return false;
+
+  // نطاق الرؤية المخصّص: التعديل/الحذف محصور في السجلات اللي داخل النطاق.
+  const scope = permScope(session, table);
+  if (scope) return rowInScope(session, table, row, scope);
 
   if (['indoor_leads','indoor_data','subscriptions'].indexOf(table) >= 0) {
     if (session.role === 'pr_manager') return true;
@@ -1170,6 +1236,20 @@ function enforceOwnership(session, table, payload) {
       if (Object.prototype.hasOwnProperty.call(p, k)) merged[k] = p[k];
     });
     return merged;
+  }
+
+  // نطاق الرؤية المخصّص: بنثبّت صاحب السجل حسب النطاق بدل قواعد الدور.
+  const scope = permScope(session, table);
+  if (scope) {
+    const ownerField = SCOPE_OWNER_FIELD[table];
+    const me = sessionOwnName(session);
+    const cur = String(p[ownerField] || '').trim();
+    if (scope === 'own' || !cur) {
+      p[ownerField] = me;
+    } else if (scope === 'team' && scopeNamesForSession(session, 'team').indexOf(normName(cur)) < 0) {
+      throw new Error('لا يمكن ربط البيانات بعضو خارج فريقك');
+    }
+    return p;
   }
 
   const allowed = employeeNamesForSession(session);
