@@ -1425,15 +1425,17 @@
       .replace(/\u0649/g,'\u064A').replace(/\u0629/g,'\u0647').replace(/[\u00A0\s]+/g,' ').trim().toLowerCase();
   }
   function sameName(a,b){ const x=normName(a); return !!x && x===normName(b); }
+  // مفتاح مقارنة اسم المستخدم: من غير مسافات وحروف صغيرة (زي السيرفر).
+  function unameKey(v){ return String(v||'').replace(/[\u00A0\s]+/g,'').toLowerCase(); }
   function currentEmployee(){
     if(!state.user) return null;
     const list = cache.employees || [];
-    return list.find(e => (e.username && state.user.username && String(e.username).toLowerCase()===String(state.user.username).toLowerCase())
+    return list.find(e => (e.username && state.user.username && unameKey(e.username)===unameKey(state.user.username))
       || e.id===state.user.employeeId) || null;
   }
   async function currentEmployeeFresh(){
     const emps=await getData('employees');
-    return emps.find(e => (e.username && state.user.username && String(e.username).toLowerCase()===String(state.user.username).toLowerCase())
+    return emps.find(e => (e.username && state.user.username && unameKey(e.username)===unameKey(state.user.username))
       || e.id===state.user.employeeId) || null;
   }
   async function prTeamName(){
