@@ -362,6 +362,11 @@
   .link-box a{color:var(--navy-700);font-weight:700;text-decoration:none;}
   tbody tr.row-clickable{cursor:pointer;}
   tbody tr.row-clickable:hover{background:#fdf6e3;}
+  table.inline-edit td[data-f]{cursor:text;}
+  table.inline-edit td[data-f]:hover{background:#fdf6e3;box-shadow:inset 0 0 0 1px var(--gold-300);}
+  .cell-input{width:100%;min-width:120px;padding:7px 9px;border:1.5px solid var(--gold-600);border-radius:8px;font-size:13.5px;background:#fff;font-family:inherit;box-sizing:border-box;}
+  textarea.cell-input{min-width:200px;resize:vertical;}
+  td.cell-saved{background:#e8f6ec !important;transition:background .6s;}
 </style>
 
 <script>
@@ -3794,6 +3799,203 @@
     });
   }
 
+
+  /* ---------------- تعديل مباشر من الخانة (المهتمون والمندوبون) ---------------- */
+  const INLINE_LOCKED = ['code','registrationDate','type'];
+  async function startInlineEdit(td, key, mod, linkMaps, options){
+    options = options || {};
+    const f = mod.fields.find(x=>x.key===td.dataset.f);
+    if(!f || INLINE_LOCKED.includes(f.key) || ['followups','image','readonly'].includes(f.type)) return;
+    const tr = td.closest('tr'); const id = tr && tr.dataset.rid; if(!id) return;
+    const row = (cache[key]||[]).find(r=>String(r.id)===String(id)); if(!row) return;
+    if(!prCanEditRow(key,row)){ showDenied('edit',key,{own:ownHint(key,'edit')}); return; }
+    if(isPRUser() && state.user.role==='pr_member' && f.key==='responsiblePerson'){
+      showToast('اسم المسؤول بيتحدد تلقائيًا ولا يمكن تغييره','error'); return;
+    }
+    const isSel = f.type==='select' || f.type==='dynamicSelect';
+    let opts = [];
+    if(f.type==='select') opts = (f.options||[]).filter(Boolean);
+    else if(f.type==='dynamicSelect'){
+      let rl = await getData(f.ref);
+      if(f.filter) rl = rl.filter(r=> r[f.filter.field]===f.filter.value);
+      if(isPRUser() && ['pr_leader','pr_member'].includes(state.user.role) && f.ref==='employees'){
+        const names = await prAllowedNames(); rl = rl.filter(r=>names.has(r.name));
+      }
+      opts = [...new Set(rl.map(r=>r[f.refField]).filter(Boolean))];
+    }
+    const cur = row[f.key]===undefined || row[f.key]===null ? '' : String(row[f.key]);
+    if(isSel && cur && !opts.includes(cur)) opts.push(cur);
+    if(td.querySelector('.cell-input')) return; // اتفتحت أثناء تحميل القوائم
+    const oldHtml = td.innerHTML;
+    let el;
+    if(isSel){
+      el = document.createElement('select');
+      el.innerHTML = `<option value="">—</option>` + opts.map(o=>`<option value="${esc(o)}">${esc(o)}</option>`).join('');
+      el.value = cur;
+    } else if(f.type==='textarea'){
+      el = document.createElement('textarea'); el.rows = 3; el.value = cur;
+    } else {
+      el = document.createElement('input');
+      el.type = f.type==='date' ? 'date' : (f.type==='number' ? 'number' : 'text');
+      if(f.type==='number') el.step = 'any';
+      el.value = f.type==='date' ? cur.slice(0,10) : cur;
+    }
+    el.className = 'cell-input';
+    td.innerHTML = ''; td.appendChild(el); el.focus();
+    if(el.tagName==='INPUT' && el.type==='text') el.select();
+
+    let done = false;
+    const cancel = ()=>{ if(done) return; done = true; td.innerHTML = oldHtml; };
+    const commit = async ()=>{
+      if(done) return; done = true;
+      let v = el.value;
+      if(f.type==='text' || f.type==='textarea') v = v.trim();
+      if(f.key==='phone' || f.key==='nationalId') v = toLatinDigits(v).trim();
+      if(String(v)===String(cur)){ td.innerHTML = oldHtml; return; }
+      const fresh = (cache[key]||[]).find(r=>String(r.id)===String(id)) || row;
+      // تحويل مهتم → مشترك محتاج بيانات الإيصال، فبنفتح الفورم الكامل بدل الحفظ المباشر
+      if(f.key==='status' && v==='مشترك' && fresh.type==='مهتم'){
+        td.innerHTML = oldHtml;
+        await openForm(key, id, options.forcedAddValues);
+        const sels = document.querySelectorAll('.modal-bg [name="status"]');
+        const s = sels[sels.length-1];
+        if(s){ s.value = 'مشترك'; s.dispatchEvent(new Event('change',{bubbles:true})); }
+        showToast('كمّل بيانات الإيصال (كود أوميجا، تاريخ الدفع، الباقة، القيمة، الرقم القومي، الجنس) عشان يتحول لمشترك');
+        return;
+      }
+      const newRow = {...fresh, [f.key]: v};
+      try{
+        if(f.required && !String(v).trim()) throw new Error('"'+f.label+'" مطلوب');
+        if(newRow.type==='مهتم' && ['sourceType','responsiblePerson'].includes(f.key) && !String(v).trim())
+          throw new Error('"'+f.label+'" مطلوب للمهتم');
+        if(isPRUser() && state.user.role==='pr_leader' && f.key==='responsiblePerson' && v){
+          const names = await prAllowedNames();
+          if(!names.has(v)) throw new Error('لا يمكن ربط البيانات بعضو خارج فريقك');
+        }
+        td.style.opacity = '.5';
+        await apiUpdate(key, newRow);
+        td.style.opacity = '';
+        td.innerHTML = fieldDisplay(f, v, linkMaps, newRow);
+        td.classList.add('cell-saved'); setTimeout(()=>td.classList.remove('cell-saved'), 900);
+      }catch(err){
+        td.style.opacity = ''; td.innerHTML = oldHtml;
+        showToast(err.message || 'تعذر حفظ التعديل', 'error');
+      }
+    };
+    el.addEventListener('keydown', e=>{
+      if(e.key==='Escape'){ e.preventDefault(); cancel(); }
+      else if(e.key==='Enter' && !(el.tagName==='TEXTAREA' && e.shiftKey)){ e.preventDefault(); commit(); }
+    });
+    el.addEventListener('blur', commit);
+    if(isSel) el.addEventListener('change', commit);
+  }
+
+  /* ---------------- رفع مهتمين/مندوبين من شيت CSV (الاسم + الرقم) ---------------- */
+  async function openLeadsImport(forcedType){
+    if(hasPerm('indoor_leads','add')===false){ showDenied('add','indoor_leads'); return; }
+    await getDataMany(['indoor_leads','employees']);
+    const mod = MODULES.indoor_leads;
+    const srcOptions = (mod.fields.find(f=>f.key==='sourceType')||{}).options || [];
+    const role = state.user.role;
+    const isMember = role==='pr_member';
+    let emps = await getData('employees');
+    let myName = '';
+    if(isPRUser()){
+      const me = await currentEmployeeFresh(); myName = (me && me.name) || state.user.name;
+      if(role!=='pr_manager'){ const names = await prAllowedNames(); emps = emps.filter(r=>names.has(r.name)); }
+    }
+    const empNames = [...new Set(emps.map(r=>r.name).filter(Boolean))];
+    const keyOf = (name,phone)=>{ const d = String(phone||'').replace(/\D/g,''); return d ? 'p'+d.slice(-10) : 'n'+normName(name); };
+    const parse = txt => fbParseClients(String(txt||'').replace(/["“”]/g,'')).map(x=>({name:x.name, phone:fbPhone(x.phone)}));
+
+    const bg = document.createElement('div'); bg.className = 'modal-bg';
+    bg.innerHTML = `<div class="modal"><h3>⬆️ رفع ${forcedType==='مندوب'?'مندوبين':(forcedType==='مهتم'?'مهتمين':'مهتمين / مندوبين')} من شيت</h3>
+      <form>
+        <div class="assumption-note" style="margin-bottom:12px;">الملف أو النص يكون عمودين: الاسم + الرقم (CSV أو انسخهم من الشيت والصقهم). السطر الأول لو عناوين بيتجاهل تلقائيًا، والأرقام المكررة (الموجودة قبل كده) بتتجاهل.</div>
+        <div class="form-grid">
+          ${forcedType ? '' : `<div class="field full"><label>النوع <span style="color:#c0392b;">*</span></label><select id="li-type"><option value="مهتم">مهتم</option><option value="مندوب">مندوب</option></select></div>`}
+          <div class="field" id="li-src-wrap"><label>وصل عن طريق <span style="color:#c0392b;">*</span></label>
+            <select id="li-src"><option value="">اختر...</option>${srcOptions.map(o=>`<option value="${esc(o)}">${esc(o)}</option>`).join('')}</select></div>
+          ${isMember ? '' : `<div class="field"><label>اسم المسؤول عنه <span id="li-resp-star" style="color:#c0392b;">*</span></label>
+            <select id="li-resp"><option value="">اختر...</option>${empNames.map(o=>`<option value="${esc(o)}">${esc(o)}</option>`).join('')}</select></div>`}
+        </div>
+        <div class="field"><textarea id="li-paste" rows="8" placeholder="أحمد محمد,01012345678&#10;منى علي,01123456789"></textarea></div>
+        <div class="field"><input type="file" id="li-file" accept=".csv,.tsv,.txt,text/plain,text/csv"/></div>
+        <div style="margin-bottom:10px;"><a href="#" id="li-tpl" style="font-size:13px;">⬇️ تحميل نموذج CSV</a></div>
+        <div id="li-prev" class="assumption-note" style="display:none;"></div>
+        <div class="modal-actions"><button type="button" class="btn-secondary" id="li-cancel">إلغاء</button><button type="submit" class="btn-primary btn-gold">رفع</button></div>
+      </form></div>`;
+    document.body.appendChild(bg);
+    const ta = bg.querySelector('#li-paste'), prev = bg.querySelector('#li-prev');
+    const getType = ()=> forcedType || bg.querySelector('#li-type').value;
+    const split = ()=>{
+      const have = new Set((cache.indoor_leads||[]).map(r=>keyOf(r.name,r.phone)));
+      const list = parse(ta.value), fresh = []; let dups = 0;
+      list.forEach(x=>{ const k = keyOf(x.name,x.phone); if(have.has(k)){ dups++; return; } have.add(k); fresh.push(x); });
+      return {fresh, dups, total:list.length};
+    };
+    const upd = ()=>{
+      const {fresh,dups,total} = split();
+      prev.style.display = total ? '' : 'none';
+      prev.textContent = `سيتم رفع ${fresh.length} سجل` + (dups ? ` • ${dups} مكرر هيتجاهل` : '');
+    };
+    const toggleType = ()=>{
+      const isI = getType()==='مهتم';
+      bg.querySelector('#li-src-wrap').style.display = isI ? '' : 'none';
+      const st = bg.querySelector('#li-resp-star'); if(st) st.style.display = isI ? '' : 'none';
+    };
+    const typeSel = bg.querySelector('#li-type'); if(typeSel) typeSel.addEventListener('change', toggleType);
+    toggleType();
+    ta.addEventListener('input', upd);
+    bg.querySelector('#li-file').addEventListener('change', async e=>{
+      const f = e.target.files[0]; if(!f) return;
+      const buf = await f.arrayBuffer(); let txt;
+      try{ txt = new TextDecoder('utf-8',{fatal:true}).decode(buf); }
+      catch(_){ txt = new TextDecoder('windows-1256').decode(buf); }   // CSV من إكسل بالعربي
+      ta.value = txt.replace(/^\uFEFF/,''); upd();
+    });
+    bg.querySelector('#li-tpl').addEventListener('click', e=>{
+      e.preventDefault();
+      const blob = new Blob(['\uFEFFالاسم,الرقم\r\nأحمد محمد,01012345678\r\nمنى علي,01123456789\r\n'],{type:'text/csv;charset=utf-8'});
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'نموذج-رفع.csv';
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+    });
+    bg.querySelector('#li-cancel').addEventListener('click', ()=>bg.remove());
+    bg.addEventListener('click', e=>{ if(e.target===bg) bg.remove(); });
+    bg.querySelector('form').addEventListener('submit', async e=>{
+      e.preventDefault();
+      const guard = submitGuard(e.target); if(!guard.ok) return;
+      try{
+        const type = getType();
+        const src = type==='مهتم' ? bg.querySelector('#li-src').value : '';
+        const respEl = bg.querySelector('#li-resp');
+        const resp = isMember ? myName : (respEl ? respEl.value : '');
+        if(type==='مهتم'){
+          if(!src) throw new Error('"وصل عن طريق" مطلوب عند رفع مهتمين');
+          if(!resp) throw new Error('اسم المسؤول عنه مطلوب عند رفع مهتمين');
+        }
+        const {fresh, dups} = split();
+        if(!fresh.length) throw new Error(dups ? 'كل الأرقام دي موجودة بالفعل' : 'لا توجد أسماء صالحة للرفع');
+        if(fresh.length>2000) throw new Error('الحد الأقصى 2000 سجل في المرة الواحدة');
+        const used = new Set((cache.indoor_leads||[]).map(r=>String(r.code||'')));
+        const today = todayISO();
+        const recs = fresh.map(x=>{
+          const rec = {};
+          mod.fields.forEach(f=>{ if(!['readonly','followups','image'].includes(f.type)) rec[f.key] = ''; });
+          const base = generateCustomerCode(x.phone); let code = base, n = 2;
+          while(used.has(code)) code = base+'-'+(n++);
+          used.add(code);
+          return {...rec, id:uid(), name:x.name, phone:x.phone, type, status:'جديد', registrationDate:today,
+                  code, sourceType:src, responsiblePerson:resp};
+        });
+        await apiAddMany('indoor_leads', recs);
+        bg.remove();
+        showToast(`تم رفع ${recs.length} سجل` + (dups ? ` وتجاهل ${dups} مكرر` : ''));
+        render();
+      }catch(err){ alert(err.message || 'تعذر الرفع'); guard.release(); }
+    });
+  }
+
   function openFeedbackImport(trip){
     const bg = document.createElement('div'); bg.className='modal-bg';
     bg.innerHTML = `<div class="modal"><h3>رفع أسماء عملاء رحلة ${esc(trip.tripName||'')}</h3>
@@ -4025,6 +4227,14 @@
           if(row) openRowDetailModal(mod, row, linkMaps, key);
         }));
       }
+      if(key==='indoor_leads' && canWriteModule && hasPerm(key,'edit')!==false){
+        const tbl = container.querySelector('table');
+        if(tbl) tbl.addEventListener('click', (e)=>{
+          const td = e.target.closest('td[data-f]');
+          if(!td || td.querySelector('.cell-input') || e.target.closest('button')) return;
+          startInlineEdit(td, key, mod, linkMaps, options);
+        });
+      }
       container.querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click', (e)=>{
         e.stopPropagation();
         const row=visibleData.find(r=>String(r.id)===String(b.dataset.edit));
@@ -4052,7 +4262,7 @@
       const limit = state.moduleLimit[key] || 200;
       const shown = visibleData.length>limit ? visibleData.slice(0,limit) : visibleData;
       const moreHtml = visibleData.length>shown.length ? `<div style="text-align:center;padding:12px;"><button class="btn-secondary" id="module-more" style="width:auto;padding:9px 20px;">عرض المزيد (${shown.length} من ${visibleData.length})</button></div>` : '';
-      return `<div class="table-wrap"><table>
+      return `<div class="table-wrap"><table${(key==='indoor_leads' && canWriteModule && hasPerm(key,'edit')!==false) ? ' class="inline-edit"' : ''}>
           <thead><tr>${mod.fields.map(f=>`<th>${esc(f.label)}</th>`).join('')}<th></th></tr></thead>
           <tbody>${shown.map(row=> canAssignTrip? renderAccommodationAssignRow(mod,row,linkMaps) : renderRow(mod,row,linkMaps,canWriteModule,rowDetail)).join('')}</tbody>
         </table></div>${moreHtml}`;
@@ -4106,8 +4316,9 @@
       ${options.crumbs? crumbsBar(options.crumbs) : ''}
       <div class="page-head">
         <h2>${mod.icon} ${options.titleOverride? esc(options.titleOverride) : esc(mod.title)}</h2>
-        ${canAddNew ? `<button class="btn-primary btn-gold" id="add-btn" style="width:auto;padding:10px 20px;">+ إضافة</button>` : ''}
+        ${canAddNew ? `<div style="display:flex;gap:8px;flex-wrap:wrap;">${key==='indoor_leads' ? `<button class="btn-secondary" id="import-leads-btn" style="width:auto;flex:0 0 auto;padding:10px 18px;">⬆️ رفع من شيت CSV</button>` : ''}<button class="btn-primary btn-gold" id="add-btn" style="width:auto;padding:10px 20px;">+ إضافة</button></div>` : ''}
       </div>
+      ${key==='indoor_leads' && canWriteModule && hasPerm(key,'edit')!==false ? `<div class="assumption-note">✏️ اضغط على أي خانة في الجدول لتعديلها مباشرة (Enter أو الضغط خارج الخانة للحفظ، Esc للإلغاء). كود العميل وتاريخ التسجيل والنوع ثابتين.</div>` : ''}
       ${isPRUser() && state.user.role!=='pr_manager' ? `<div class="assumption-note">البيانات المعروضة هنا خاصة بنطاق صلاحيتك. لا يتم عرض بيانات أعضاء العلاقات العامة الآخرين.</div>`:''}
       ${!canWriteModule && !canAssignTrip ? `<div class="assumption-note">🔒 عرض فقط — الإضافة والتعديل والحذف في هذا القسم ليست من صلاحياتك. تواصل مع مدير النظام لو محتاجها.</div>`:''}
       ${rowDetail ? `<div class="assumption-note">اضغط على أي صف في الجدول لعرض كل تفاصيله في نافذة منفصلة.</div>` : ''}
@@ -4130,6 +4341,8 @@
 
     if(canAddNew){
       document.getElementById('add-btn').addEventListener('click', ()=> key==='employees' ? openEmployeeAccountForm() : openForm(key, null, options.forcedAddValues));
+      const impBtn = document.getElementById('import-leads-btn');
+      if(impBtn) impBtn.addEventListener('click', ()=> openLeadsImport((options.forcedAddValues && options.forcedAddValues.type) || ''));
     }
 
     const filterToggleBtn = document.getElementById('module-filter-toggle');
@@ -4274,7 +4487,7 @@
 
   function renderRow(mod, row, linkMaps, canWrite, clickable){
     if(canWrite===undefined) canWrite=true; // القيمة الافتراضية بتحافظ على السلوك القديم لأي نداء تاني للدالة دي
-    return `<tr${clickable? ` class="row-clickable" data-viewrow="${esc(row.id)}"` : ''}>${mod.fields.map(f=>`<td>${fieldDisplay(f,row[f.key],linkMaps,row)}</td>`).join('')}
+    return `<tr data-rid="${esc(row.id)}"${clickable? ` class="row-clickable" data-viewrow="${esc(row.id)}"` : ''}>${mod.fields.map(f=>`<td data-f="${esc(f.key)}">${fieldDisplay(f,row[f.key],linkMaps,row)}</td>`).join('')}
       <td style="white-space:nowrap;">
         ${(()=>{ const k=Object.keys(MODULES).find(x=>MODULES[x]===mod); const pe=hasPerm(k,'edit'), pd=hasPerm(k,'delete');
           return (canWrite && pe!==false ? `<button class="icon-btn" data-edit="${row.id}">✏️</button>` : '')
