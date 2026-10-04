@@ -426,22 +426,48 @@ function isWriteActionAllowed(session, table, payload, action) {
   // لو صلاحية الإضافة = صلاحية التعديل (الحالة العادية من غير تخصيص)، مش محتاجين نعرف
   // الصف جديد ولا لأ — فبنتجنب قراءة الجدول كله في كل عملية كتابة.
   const addOk = check('add'), editOk = check('edit');
-  if (addOk === editOk && (action === 'upsert' || action === 'batchUpsert')) return addOk;
 
-  let existingIds = null;
-  const isNew = function(row) {
-    if (!existingIds) {
-      existingIds = {};
-      getCachedRows(table).forEach(function(r){ existingIds[String(r.id || '')] = true; });
-    }
-    const id = String((row || {}).id || '');
-    return !id || !existingIds[id];
+  // الاشتراك بيتنشأ/بيتحدّث تلقائيًا من تحويل المهتم لمشترك (صلاحية "إضافة" الاشتراكات
+  // مقفولة في صفحة الصلاحيات عن قصد). فبنسمح بالكتابة دي بس لو الصف مربوط بمهتم حالته
+  // "مشترك" والموظف عنده صلاحية تعديل المهتمين، وفي التحديث بنسمح بحقول الإيصال بس.
+  const RECEIPT_KEYS = ['omegaCode','paymentDate','packageType','subscriptionValue','installmentAmount',
+                        'installmentMonths','downPayment','gender','nationalId'];
+  const leadConversionOk = function(row, existing) {
+    if (table !== 'subscriptions') return false;
+    const lid = String((row || {}).leadId || '');
+    if (!lid) return false;
+    if (permOverride(session, 'indoor_leads', 'edit') === false) return false;
+    const lead = getCachedRows('indoor_leads').find(function(l){ return String(l.id || '') === lid; });
+    if (!lead || String(lead.type || '') !== 'مهتم' || String(lead.status || '') !== 'مشترك') return false;
+    if (!existing) return true;
+    if (String(existing.leadId || '') !== lid) return false;
+    return Object.keys(row).every(function(k){
+      return RECEIPT_KEYS.indexOf(k) >= 0 || String(row[k] === undefined || row[k] === null ? '' : row[k]) === String(existing[k] === undefined || existing[k] === null ? '' : existing[k]);
+    });
   };
 
-  if (action === 'upsert') return isNew(payload) ? addOk : editOk;
+  if (table !== 'subscriptions' && addOk === editOk && (action === 'upsert' || action === 'batchUpsert')) return addOk;
+
+  let existingById = null;
+  const findExisting = function(row) {
+    if (!existingById) {
+      existingById = {};
+      getCachedRows(table).forEach(function(r){ existingById[String(r.id || '')] = r; });
+    }
+    const id = String((row || {}).id || '');
+    return id ? (existingById[id] || null) : null;
+  };
+  const isNew = function(row) { return !findExisting(row); };
+  const rowOk = function(row) {
+    const ex = findExisting(row);
+    if (!ex) return addOk || leadConversionOk(row, null);
+    return editOk || leadConversionOk(row, ex);
+  };
+
+  if (action === 'upsert') return rowOk(payload);
   if (action === 'batchUpsert') {
     const rows = Array.isArray((payload || {}).rows) ? payload.rows : [];
-    return rows.every(function(r){ return isNew(r) ? addOk : editOk; });
+    return rows.every(rowOk);
   }
   return roleOk;
 }
