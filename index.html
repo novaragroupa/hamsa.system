@@ -456,7 +456,7 @@
         {key:'omegaCode', label:'كود أوميجا', type:'text', showWhenSubscribed:true},
         {key:'paymentDate', label:'تاريخ الدفع', type:'date', showWhenSubscribed:true},
         {key:'packageType', label:'نوع الباقة', type:'select', showWhenSubscribed:true,
-          options:['','عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان','حج قرعة تيسير','حج قرعة عادي','حج سياحي']},
+          options:['','عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان','تيسير شعبان رمضان','حج قرعة تيسير','حج قرعة عادي','حج سياحي']},
         {key:'subscriptionValue', label:'قيمة الاشتراك', type:'number', showWhenSubscribed:true},
         {key:'installmentAmount', label:'قيمة القسط (اختياري)', type:'number', showWhenSubscribed:true, optionalWhenSubscribed:true},
         {key:'installmentMonths', label:'عدد شهور التقسيط (اختياري)', type:'number', showWhenSubscribed:true, optionalWhenSubscribed:true},
@@ -532,7 +532,7 @@
         {key:'omegaCode', label:'كود أوميجا', type:'text'},
         {key:'paymentDate', label:'تاريخ الدفع', type:'date'},
         {key:'packageType', label:'نوع الباقة', type:'select',
-          options:['','عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان','حج قرعة تيسير','حج قرعة عادي','حج سياحي']},
+          options:['','عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان','تيسير شعبان رمضان','حج قرعة تيسير','حج قرعة عادي','حج سياحي']},
         {key:'subscriptionValue', label:'قيمة الاشتراك', type:'number'},
         {key:'installmentMonths', label:'عدد شهور التقسيط', type:'number'},
         {key:'installmentAmount', label:'قيمة القسط', type:'number'},
@@ -556,7 +556,7 @@
     {key:'date', label:'التاريخ', type:'date', required:true},
     {key:'description', label:'البيان', type:'text'},
     {key:'packageType', label:'نوع الباقة', type:'select',
-      options:['','عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان','حج قرعة تيسير','حج قرعة عادي','حج سياحي']},
+      options:['','عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان','تيسير شعبان رمضان','حج قرعة تيسير','حج قرعة عادي','حج سياحي']},
     {key:'debit', label:'مدين (على العميل)', type:'number'},
     {key:'credit', label:'دائن (مدفوع من العميل)', type:'number'},
   ];
@@ -3434,7 +3434,7 @@
     const WINNER_FILTER_FIELDS = [
       {key:'gender', label:'الجنس', options:['ذكر','أنثى']},
       {key:'governorate', label:'المحافظة', options:EGYPT_GOVERNORATES},
-      {key:'packageType', label:'نوع الباقة', options:['عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان','حج قرعة تيسير','حج قرعة عادي','حج سياحي']},
+      {key:'packageType', label:'نوع الباقة', options:['عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان','تيسير شعبان رمضان','حج قرعة تيسير','حج قرعة عادي','حج سياحي']},
       {key:'travelStatus', label:'حالة السفر', options:['لم يسافر','سافر']},
     ];
     state.winnersFilters = state.winnersFilters || {};
