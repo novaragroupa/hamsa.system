@@ -72,6 +72,43 @@
   .hero-tagline{font-family:'Amiri',serif;color:var(--gold-300);font-size:clamp(14.5px,1.5vw,16.5px);
     margin:0;max-width:320px;line-height:1.95;}
 
+
+  /* ---------- مشهد الهيرو المتحرك: رحلة بين مكة والمدينة ---------- */
+  /* السماء بنجوم بتلمع + هلال، وطيارة بتطير على قوس مضيء بين الكعبة (مكة المكرمة)
+     والمسجد النبوي (المدينة المنورة) ذهاب وعودة، وحوالين الكعبة دايرة طواف هادية.
+     كله SVG/CSS خفيف ومن غير أي مكتبات، وبيتوقف لو المستخدم مفعّل "تقليل الحركة". */
+  .hero-scene{position:absolute;inset:0;z-index:1;pointer-events:none;}
+  .hero-scene svg{width:100%;height:100%;display:block;}
+  .hero-scene .star{fill:#fff;opacity:.2;animation:twinkle 4s ease-in-out infinite;}
+  @keyframes twinkle{0%,100%{opacity:.15;}50%{opacity:.85;}}
+  .hero-scene .moon-glow{animation:moonPulse 6s ease-in-out infinite;transform-origin:250px 112px;}
+  @keyframes moonPulse{0%,100%{opacity:.55;transform:scale(1);}50%{opacity:.9;transform:scale(1.12);}}
+  .hero-scene .route{stroke-dasharray:3 9;animation:routeFlow 2.4s linear infinite;}
+  @keyframes routeFlow{to{stroke-dashoffset:-24;}}
+  .hero-scene .city-glow{animation:cityGlow 5s ease-in-out infinite;}
+  .hero-scene .city-glow.g2{animation-delay:-2.5s;}
+  @keyframes cityGlow{0%,100%{opacity:.35;}50%{opacity:.8;}}
+  .hero-scene .win{animation:winBlink 3.6s ease-in-out infinite;}
+  @keyframes winBlink{0%,100%{opacity:.55;}50%{opacity:1;}}
+  .hero-scene .place-name{font-family:'Amiri',serif;font-weight:700;fill:var(--gold-300);font-size:21px;
+    text-anchor:middle;opacity:.9;}
+  /* نجمة إسلامية تتلف ببطء ورا اللوجو */
+  .hero-star{position:absolute;left:50%;top:50%;width:clamp(210px,26vw,310px);aspect-ratio:1;
+    margin:calc(clamp(210px,26vw,310px) / -2) 0 0 calc(clamp(210px,26vw,310px) / -2);
+    border:1.5px solid rgba(242,183,5,.26);border-radius:3px;animation:spinCW 90s linear infinite;}
+  .hero-star.s2{animation:spinCCW 120s linear infinite;border-color:rgba(248,216,120,.2);}
+  @keyframes spinCW{from{transform:rotate(0);}to{transform:rotate(360deg);}}
+  @keyframes spinCCW{from{transform:rotate(45deg);}to{transform:rotate(-315deg);}}
+  /* التلبية والأدعية بتتبدّل تحت الشعار */
+  .hero-dua{position:relative;height:34px;width:min(340px,80vw);margin-top:16px;}
+  .hero-dua span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    font-family:'Amiri',serif;font-size:clamp(16px,1.7vw,19px);color:#fff;opacity:0;white-space:nowrap;
+    animation:duaCycle 16s ease-in-out infinite;}
+  .hero-dua span:nth-child(2){animation-delay:4s;}
+  .hero-dua span:nth-child(3){animation-delay:8s;}
+  .hero-dua span:nth-child(4){animation-delay:12s;}
+  @keyframes duaCycle{0%{opacity:0;transform:translateY(8px);}5%,20%{opacity:1;transform:none;}25%,100%{opacity:0;transform:translateY(-6px);}}
+
   .login-panel{flex:1 1 44%;display:flex;align-items:center;justify-content:center;
     background:var(--sand-50);padding:48px 28px;}
   .login-panel-inner{width:100%;max-width:340px;}
@@ -97,7 +134,10 @@
     .login-screen{flex-direction:column;}
     .login-hero{min-height:30vh;padding:34px 24px;}
     .hero-icon-wrap img{height:140px;}
-    .hero-tagline{display:none;}
+    .hero-tagline,.hero-dua{display:none;}
+    .hero-scene{opacity:.6;}
+    .hero-scene .place-name{display:none;}
+    .hero-star{width:200px;margin:-100px 0 0 -100px;}
     .login-panel{padding:36px 22px 52px;}
   }
   @media (prefers-reduced-motion:reduce){
@@ -112,7 +152,9 @@
   .toast{padding:10px 16px;border-radius:12px;background:#14213d;color:#fff;font-size:13px;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.2);}
   .toast.error{background:#b3261e;} .toast.ok{background:#1b7f3b;}
   .page-inline-loading{padding:40px;text-align:center;color:var(--navy-900);font-weight:700;}
-  @media (prefers-reduced-motion:reduce){*{transition:none !important;animation:none !important;}}
+  @media (prefers-reduced-motion:reduce){*{transition:none !important;animation:none !important;}
+    .hero-dua span:first-child{opacity:1;}
+    .hero-scene .star{opacity:.5;}}
   .field{margin-bottom:16px;}
   .field label{display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:var(--navy-800);}
   .field input, .field select, .field textarea{width:100%;padding:11px 14px;border:1.5px solid var(--line);
@@ -456,7 +498,7 @@
         {key:'omegaCode', label:'كود أوميجا', type:'text', showWhenSubscribed:true},
         {key:'paymentDate', label:'تاريخ الدفع', type:'date', showWhenSubscribed:true},
         {key:'packageType', label:'نوع الباقة', type:'select', showWhenSubscribed:true,
-          options:['','عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان','تيسير شعبان رمضان','حج قرعة تيسير','حج قرعة عادي','حج سياحي']},
+          options:['','عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان','حج قرعة تيسير','حج قرعة عادي','حج سياحي']},
         {key:'subscriptionValue', label:'قيمة الاشتراك', type:'number', showWhenSubscribed:true},
         {key:'installmentAmount', label:'قيمة القسط (اختياري)', type:'number', showWhenSubscribed:true, optionalWhenSubscribed:true},
         {key:'installmentMonths', label:'عدد شهور التقسيط (اختياري)', type:'number', showWhenSubscribed:true, optionalWhenSubscribed:true},
@@ -532,7 +574,7 @@
         {key:'omegaCode', label:'كود أوميجا', type:'text'},
         {key:'paymentDate', label:'تاريخ الدفع', type:'date'},
         {key:'packageType', label:'نوع الباقة', type:'select',
-          options:['','عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان','تيسير شعبان رمضان','حج قرعة تيسير','حج قرعة عادي','حج سياحي']},
+          options:['','عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان','حج قرعة تيسير','حج قرعة عادي','حج سياحي']},
         {key:'subscriptionValue', label:'قيمة الاشتراك', type:'number'},
         {key:'installmentMonths', label:'عدد شهور التقسيط', type:'number'},
         {key:'installmentAmount', label:'قيمة القسط', type:'number'},
@@ -556,7 +598,7 @@
     {key:'date', label:'التاريخ', type:'date', required:true},
     {key:'description', label:'البيان', type:'text'},
     {key:'packageType', label:'نوع الباقة', type:'select',
-      options:['','عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان','تيسير شعبان رمضان','حج قرعة تيسير','حج قرعة عادي','حج سياحي']},
+      options:['','عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان','حج قرعة تيسير','حج قرعة عادي','حج سياحي']},
     {key:'debit', label:'مدين (على العميل)', type:'number'},
     {key:'credit', label:'دائن (مدفوع من العميل)', type:'number'},
   ];
@@ -1653,16 +1695,135 @@
     });
   }
 
+
+  /* مشهد الهيرو: بيتبني كـ SVG واحد. الإحداثيات في viewBox 1000×700، ومكة يمين والمدينة شمال. */
+  function heroSceneHtml(){
+    // نجوم ثابتة المواقع (seed بسيط) عشان نفس الشكل في كل مرة
+    let seed = 7; const rnd = ()=>{ seed = (seed*9301+49297)%233280; return seed/233280; };
+    let stars = '';
+    for(let i=0;i<46;i++){
+      const x = (rnd()*1000).toFixed(0), y = (rnd()*430).toFixed(0), r = (0.8+rnd()*1.5).toFixed(1);
+      stars += `<circle class="star" cx="${x}" cy="${y}" r="${r}" style="animation-delay:${(-rnd()*4).toFixed(2)}s;animation-duration:${(3+rnd()*3).toFixed(1)}s"/>`;
+    }
+    // الطواف: نقط صغيرة بتلف حوالين الكعبة على مسار بيضاوي
+    let tawaf = '';
+    const N = 7, T = 14;
+    for(let i=0;i<N;i++){
+      tawaf += `<circle r="3.2" fill="#fff" opacity=".9"><animateMotion dur="${T}s" begin="${(-i*T/N).toFixed(2)}s" repeatCount="indefinite" path="M652 656 a88 20 0 1 0 176 0 a88 20 0 1 0 -176 0"/></circle>`;
+    }
+    const plane = `<path d="M18 0 L8 -3 L-2 -3 L-14 -16 L-18 -16 L-10 -3 L-16 -3 L-20 -8 L-23 -8 L-20 0 L-23 8 L-20 8 L-16 3 L-10 3 L-18 16 L-14 16 L-2 3 L8 3Z" fill="#fff"/>`;
+    const fly = (path, begin) => `
+      <g class="plane" opacity="0">
+        <animate attributeName="opacity" values="0;1;1;0;0" keyTimes="0;.06;.44;.5;1" dur="20s" begin="${begin}" repeatCount="indefinite"/>
+        <animateMotion dur="20s" begin="${begin}" repeatCount="indefinite" rotate="auto" keyPoints="0;1;1" keyTimes="0;.5;1" calcMode="linear" path="${path}"/>
+        <circle r="17" fill="url(#planeGlow)"/>
+        ${plane}
+      </g>`;
+    return `
+    <svg viewBox="0 0 1000 700" preserveAspectRatio="xMidYMax slice" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <radialGradient id="planeGlow"><stop offset="0" stop-color="#f8d878" stop-opacity=".75"/><stop offset="1" stop-color="#f8d878" stop-opacity="0"/></radialGradient>
+        <radialGradient id="moonGlowG"><stop offset="0" stop-color="#f8d878" stop-opacity=".5"/><stop offset="1" stop-color="#f8d878" stop-opacity="0"/></radialGradient>
+        <radialGradient id="cityG"><stop offset="0" stop-color="#f2b705" stop-opacity=".55"/><stop offset="1" stop-color="#f2b705" stop-opacity="0"/></radialGradient>
+        <radialGradient id="domeG" cx=".4" cy=".3"><stop offset="0" stop-color="#4fc58a"/><stop offset="1" stop-color="#14744a"/></radialGradient>
+        <linearGradient id="groundG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0f2547"/><stop offset="1" stop-color="#081226"/></linearGradient>
+        <mask id="moonMask"><rect width="1000" height="700" fill="#fff"/><circle cx="263" cy="104" r="30" fill="#000"/></mask>
+      </defs>
+
+      ${stars}
+
+      <!-- الهلال -->
+      <circle class="moon-glow" cx="250" cy="112" r="70" fill="url(#moonGlowG)"/>
+      <circle cx="250" cy="112" r="33" fill="#f8d878" mask="url(#moonMask)"/>
+
+      <!-- مسار الرحلة: مكة ⇄ المدينة -->
+      <path class="route" d="M740 540 C 700 -100 300 -100 260 540" fill="none" stroke="#f8d878" stroke-width="1.6" stroke-linecap="round" opacity=".4"/>
+      ${fly('M740 540 C 700 -100 300 -100 260 540','0s')}
+      ${fly('M260 540 C 300 -100 700 -100 740 540','10s')}
+
+      <!-- الأرض -->
+      <path d="M0 640 Q 140 612 280 636 T 560 630 T 840 634 T 1000 624 V700 H0Z" fill="url(#groundG)"/>
+      <path d="M0 640 Q 140 612 280 636 T 560 630 T 840 634 T 1000 624" fill="none" stroke="#f2b705" stroke-width="1" opacity=".28"/>
+
+      <!-- المدينة المنورة: المسجد النبوي (القبة الخضراء) -->
+      <g>
+        <ellipse class="city-glow g2" cx="262" cy="596" rx="150" ry="70" fill="url(#cityG)"/>
+        <!-- مآذن -->
+        <g fill="#1c3f73">
+          <rect x="176" y="520" width="9" height="116"/><rect x="340" y="520" width="9" height="116"/>
+          <rect x="172" y="528" width="17" height="6"/><rect x="336" y="528" width="17" height="6"/>
+        </g>
+        <path d="M180.500 498 l5 22 h-10z M344.500 498 l5 22 h-10z" fill="#c99a03"/>
+        <!-- جسم المسجد -->
+        <rect x="196" y="596" width="132" height="40" fill="#234a85"/>
+        <rect x="196" y="594" width="132" height="5" fill="#f2b705" opacity=".8"/>
+        <!-- قباب صغيرة -->
+        <path d="M200 594 a16 16 0 0 1 32 0z M292 594 a16 16 0 0 1 32 0z" fill="#2c5a9c"/>
+        <!-- القبة الخضراء -->
+        <rect x="246" y="574" width="32" height="22" fill="#2c5a9c"/>
+        <path d="M240 574 a22 25 0 0 1 44 0z" fill="url(#domeG)"/>
+        <path d="M262 549 v-14" stroke="#f2b705" stroke-width="2"/>
+        <circle cx="262" cy="531" r="4.500" fill="#f2b705"/>
+        <!-- نوافذ مضيئة -->
+        <g fill="#f8d878">
+          <rect class="win" x="208" y="610" width="6" height="12" rx="3"/><rect class="win" x="226" y="610" width="6" height="12" rx="3" style="animation-delay:-.8s"/>
+          <rect class="win" x="292" y="610" width="6" height="12" rx="3" style="animation-delay:-1.6s"/><rect class="win" x="310" y="610" width="6" height="12" rx="3" style="animation-delay:-2.4s"/>
+          <rect class="win" x="259" y="606" width="6" height="14" rx="3" style="animation-delay:-1.2s"/>
+        </g>
+        <text class="place-name" x="262" y="680">المدينة المنورة</text>
+      </g>
+
+      <!-- مكة المكرمة: الكعبة وحولها الطواف -->
+      <g>
+        <ellipse class="city-glow" cx="740" cy="590" rx="160" ry="80" fill="url(#cityG)"/>
+        <!-- مآذن الحرم -->
+        <g fill="#1c3f73">
+          <rect x="632" y="540" width="8" height="96"/><rect x="822" y="540" width="8" height="96"/>
+          <rect x="629" y="548" width="14" height="5"/><rect x="819" y="548" width="14" height="5"/>
+        </g>
+        <path d="M636 520 l4 20 h-8z M826 520 l4 20 h-8z" fill="#c99a03"/>
+        <!-- دايرة الطواف (الجزء الخلفي) -->
+        <ellipse cx="740" cy="656" rx="88" ry="20" fill="none" stroke="#f8d878" stroke-width="1" opacity=".3"/>
+        <!-- الكعبة -->
+        <polygon points="708,590 772,590 780,584 716,584" fill="#2a2a33"/>
+        <rect x="708" y="590" width="64" height="62" fill="#17171d"/>
+        <polygon points="772,590 780,584 780,646 772,652" fill="#101015"/>
+        <rect x="708" y="602" width="64" height="9" fill="#f2b705"/>
+        <polygon points="772,602 780,597 780,606 772,611" fill="#c99a03"/>
+        <rect x="716" y="620" width="14" height="24" rx="2" fill="#c99a03"/>
+        <rect x="719" y="623" width="8" height="18" rx="1" fill="#f8d878" opacity=".7"/>
+        ${tawaf}
+        <text class="place-name" x="740" y="688">مكة المكرمة</text>
+      </g>
+    </svg>`;
+  }
+  // لو المستخدم مفعّل "تقليل الحركة": نوقف حركة الـ SVG
+  function initHeroScene(){
+    try{
+      if(window.matchMedia && window.matchMedia('(prefers-reduced-motion:reduce)').matches){
+        const svg = root.querySelector('.hero-scene svg');
+        if(svg){ svg.querySelectorAll('.plane').forEach(n=>n.remove()); if(svg.pauseAnimations) svg.pauseAnimations(); }
+      }
+    }catch(_){}
+  }
+
   function renderLogin(){
     root.innerHTML = `
       <div class="login-screen">
         <div class="login-hero">
           <div class="hero-pattern"></div>
+          <div class="hero-scene" aria-hidden="true">${heroSceneHtml()}</div>
           <div class="hero-content">
-            <div class="hero-icon-wrap"><img src="logo-mark.png" alt="همسة للسياحة"/></div>
+            <div class="hero-icon-wrap"><span class="hero-star s1"></span><span class="hero-star s2"></span><img src="logo-mark.png" alt="همسة للسياحة"/></div>
             <h2 class="hero-title">همسة للسياحة</h2>
             <div class="hero-divider"></div>
             <p class="hero-tagline">رفقاؤكم في كل خطوة نحو بيت الله الحرام</p>
+            <div class="hero-dua" aria-hidden="true">
+              <span>لبّيك اللهم لبّيك</span>
+              <span>حجًّا مبرورًا وسعيًا مشكورًا</span>
+              <span>عمرة مقبولة بإذن الله</span>
+              <span>رحلة إيمانية ميسّرة</span>
+            </div>
           </div>
         </div>
         <div class="login-panel">
@@ -1683,6 +1844,7 @@
           </div>
         </div>
       </div>`;
+    initHeroScene();
     document.getElementById('login-form').addEventListener('submit', async e=>{
       e.preventDefault();
       const btn = e.target.querySelector('button[type=submit]');
@@ -3434,7 +3596,7 @@
     const WINNER_FILTER_FIELDS = [
       {key:'gender', label:'الجنس', options:['ذكر','أنثى']},
       {key:'governorate', label:'المحافظة', options:EGYPT_GOVERNORATES},
-      {key:'packageType', label:'نوع الباقة', options:['عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان','تيسير شعبان رمضان','حج قرعة تيسير','حج قرعة عادي','حج سياحي']},
+      {key:'packageType', label:'نوع الباقة', options:['عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان','حج قرعة تيسير','حج قرعة عادي','حج سياحي']},
       {key:'travelStatus', label:'حالة السفر', options:['لم يسافر','سافر']},
     ];
     state.winnersFilters = state.winnersFilters || {};
