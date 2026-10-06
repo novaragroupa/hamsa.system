@@ -4944,7 +4944,19 @@
         }
         // dedupe: لو المرجع فيه أكتر من صف بنفس القيمة (زي جدول الزيارات اللي
         // كل زيارة سجل لوحده)، منعرضش نفس القيمة أكتر من مرة في القائمة.
-        refOptions[f.key] = [...new Set(refList.map(r=>r[f.refField]).filter(Boolean))];
+        let _opts = [...new Set(refList.map(r=>r[f.refField]).filter(Boolean))];
+        // اسم الموظف الحالي لازم يظهر دايمًا في قائمة الأسماء (حتى لو فلترة الفريق/الحالة شالته)،
+        // وكمان القيمة المحفوظة قبل كده في السجل عشان ماتظهرش فاضية وقت التعديل.
+        if(f.ref==='employees' && !f.filter && ['responsiblePerson','memberId'].includes(f.key)){
+          const _me = (await currentEmployeeFresh())?.name || state.user.name;
+          if(_me && !_opts.some(o=>sameName(o,_me))) _opts.unshift(_me);
+        }
+        const _cur = row && row[f.key];
+        if(f.type==='dynamicSelect' && _cur && !_opts.some(o=>o===_cur)){
+          const _m = _opts.find(o=>sameName(o,_cur));
+          if(!_m) _opts.push(_cur);
+        }
+        refOptions[f.key] = _opts;
       } else if(f.type==='linkSelect'){
         const parentVal = f.parentKey ? (row? (row[f.parentKey]||'') : '') : null;
         refOptions[f.key] = await linkSelectOptionsFor(key, f, parentVal);
@@ -5266,6 +5278,8 @@
 
   function renderField(f, row, refOptions){
     let val = row? (row[f.key]||'') : '';
+    // عضو الفريق: اسمه بيتختار تلقائيًا في خانة المسؤول عند إضافة سجل جديد.
+    if(!val && f.key==='responsiblePerson' && !(row && row.id) && state.user && state.user.role==='pr_member'){ val = (currentEmployee()?.name) || state.user.name || ''; }
     // توافق مع السجلات القديمة بعد إعادة التسمية / حذف الحالة
     if(f.key==='sourceType'){ if(val==='علاقات عامة') val='سيلز'; else if(val==='الإعلام') val='ميديا'; }
     if(f.key==='status' && val==='تحويل لحجز' && f.options && !f.options.includes(val)) val='تم التواصل';

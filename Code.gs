@@ -913,8 +913,12 @@ function employeeNamesForSession(session) {
   // الأسماء بترجع مُطبَّعة (normName) — كل المقارنات بتتم على الأسماء المُطبَّعة.
   if (session.role === 'pr_manager') return emps.map(x => normName(x.name)).filter(Boolean);
   const myTeam = sessionOwnTeam(session);
-  return emps.filter(x => normTeam(x.team) === myTeam && x.status !== 'inactive')
+  const names = emps.filter(x => normTeam(x.team) === myTeam && x.status !== 'inactive')
     .map(x => normName(x.name)).filter(Boolean);
+  // اسم المستخدم نفسه لازم يكون دايمًا ضمن الأسماء المسموحة (حتى لو فريقه/حالته في شيت الموظفين مش مطابقة)
+  const me = normName(sessionOwnName(session));
+  if (me && names.indexOf(me) < 0) names.push(me);
+  return names;
 }
 
 // لو اتعدل فريق موظف من صفحة "الموظفون"، بنزامن نفس القيمة على حساب تسجيل
@@ -1022,9 +1026,9 @@ function filterRowsForSession(rows, table, session) {
     // بيانات باقي زمايله في نفس الفريق. رئيس الفريق (pr_leader) لسه
     // بيشوف كل أعضاء فريقه زي ما كان (محتاجها عشان يدير الفريق).
     if (session.role === 'pr_member') {
-      return rows.filter(r => String(r.id || '') === String(session.employeeId || ''));
+      return rows.filter(r => String(r.id || '') === String(session.employeeId || '') || (myName && normName(r.name) === myName));
     }
-    return rows.filter(r => allowed.indexOf(normName(r.name)) >= 0);
+    return rows.filter(r => allowed.indexOf(normName(r.name)) >= 0 || String(r.id || '') === String(session.employeeId || '') || (myName && normName(r.name) === myName));
   }
 
   if (table === 'teams') {
