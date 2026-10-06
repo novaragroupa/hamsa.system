@@ -409,6 +409,120 @@
   .cell-input{width:100%;min-width:120px;padding:7px 9px;border:1.5px solid var(--gold-600);border-radius:8px;font-size:13.5px;background:#fff;font-family:inherit;box-sizing:border-box;}
   textarea.cell-input{min-width:200px;resize:vertical;}
   td.cell-saved{background:#e8f6ec !important;transition:background .6s;}
+
+  /* ================= UI v2 — طبقة التحسين البصري (CSS فقط، بدون تغيير المنطق) ================= */
+  :root{
+    --primary:var(--navy-800); --primary-dark:var(--navy-900); --background:#f5f6fa; --surface:#fff; --surface-hover:#fbfaf6;
+    --text-primary:var(--ink); --text-secondary:var(--muted); --border:#e6e3d8; --warning:var(--warn);
+    --shadow:0 1px 2px rgba(12,31,61,.05),0 6px 20px rgba(12,31,61,.06); --shadow-lg:0 14px 36px rgba(12,31,61,.14);
+    --ease:cubic-bezier(.2,.7,.2,1); --t-fast:.18s; --t-mid:.38s;
+  }
+  #app-root{background:var(--background);}
+  .main{padding:28px 40px;animation:v2-fade var(--t-mid) var(--ease);}
+  @keyframes v2-fade{from{opacity:0}to{opacity:1}}
+  @keyframes v2-up{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+  @keyframes v2-pop{from{opacity:0;transform:translateY(14px) scale(.98)}to{opacity:1;transform:none}}
+  @keyframes v2-shimmer{to{background-position:-200% 0}}
+
+  /* الشريط الجانبي */
+  .sidebar{width:272px;}
+  .nav-item{position:relative;transition:background var(--t-fast),color var(--t-fast),transform var(--t-fast);}
+  .nav-item:hover{transform:translateX(-2px);}
+  .nav-item:focus-visible,.btn-primary:focus-visible,.btn-secondary:focus-visible,.icon-btn:focus-visible,.dash-section-card:focus-visible{outline:3px solid var(--gold-500);outline-offset:2px;}
+  .nav-item.active::before{content:"";position:absolute;inset-inline-start:-12px;top:20%;bottom:20%;width:4px;border-radius:4px;background:var(--gold-300);}
+  .nav-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+  /* الكروت والإحصائيات */
+  .card,.stat-card,.dash-section-card,.area-chip{border-color:var(--border);box-shadow:var(--shadow);}
+  .card,.stat-card,.dash-section-card,.dash-hero{animation:v2-up var(--t-mid) var(--ease) both;}
+  .stat-card{transition:transform var(--t-fast),box-shadow var(--t-fast);}
+  .stat-card:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg);}
+  .stat-card .num{font-size:30px;letter-spacing:-.3px;font-variant-numeric:tabular-nums;}
+  .stat-grid>*:nth-child(2){animation-delay:.04s}.stat-grid>*:nth-child(3){animation-delay:.08s}.stat-grid>*:nth-child(4){animation-delay:.12s}
+  .stat-grid>*:nth-child(5){animation-delay:.16s}.stat-grid>*:nth-child(6){animation-delay:.2s}
+  .dash-section-card{transition:transform var(--t-fast),box-shadow var(--t-fast),border-color var(--t-fast);}
+  .dash-hero{box-shadow:var(--shadow-lg);}
+
+  /* الأزرار */
+  .btn-primary,.btn-secondary,.icon-btn{transition:transform var(--t-fast),box-shadow var(--t-fast),background var(--t-fast),opacity var(--t-fast);}
+  .btn-primary:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 6px 16px rgba(12,31,61,.2);}
+  .btn-primary:active:not(:disabled),.btn-secondary:active{transform:translateY(0) scale(.98);}
+  button:disabled,.btn-primary:disabled{opacity:.6;cursor:not-allowed !important;}
+  .btn-primary.is-loading{position:relative;color:transparent !important;pointer-events:none;}
+  .btn-primary.is-loading::after{content:"";position:absolute;inset:0;margin:auto;width:18px;height:18px;border-radius:50%;
+    border:2.5px solid rgba(12,31,61,.25);border-top-color:var(--navy-900);animation:v2-spin .7s linear infinite;}
+  @keyframes v2-spin{to{transform:rotate(360deg)}}
+
+  /* الجداول */
+  table{font-size:13.5px;}
+  thead th{background:var(--navy-800);position:sticky;top:0;z-index:1;font-size:12.5px;letter-spacing:.2px;}
+  tbody td{padding:12px;}
+  tbody tr{transition:background var(--t-fast);}
+  tbody tr:hover{background:#fdf8ea;}
+  .table-wrap{border:1px solid var(--border);border-radius:12px;max-width:100%;}
+  .badge{padding:4px 12px;}
+  .badge::before{content:"●";font-size:8px;margin-inline-end:6px;vertical-align:1px;} /* لا نعتمد على اللون وحده */
+  .empty-state{background:var(--surface);border:1px dashed var(--border);border-radius:16px;}
+
+  /* النوافذ */
+  .modal-bg{backdrop-filter:blur(3px);animation:v2-fade var(--t-fast) ease;}
+  .modal{animation:v2-pop var(--t-mid) var(--ease);box-shadow:var(--shadow-lg);}
+  .modal-actions{position:sticky;bottom:-26px;background:linear-gradient(180deg,rgba(255,255,255,0),#fff 28%);padding:18px 0 4px;margin-bottom:-4px;}
+  .modal.wide,.modal:has(.v2-sections){max-width:860px;}
+
+  /* الحقول */
+  .field label{display:block;font-size:12.5px;font-weight:700;color:var(--navy-800);margin-bottom:6px;}
+  .field:has(:required) > label::after{content:" *";color:var(--danger);font-weight:800;}
+  .field input,.field select,.field textarea{width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:10px;font-size:14px;
+    background:#fff;color:var(--ink);transition:border-color var(--t-fast),box-shadow var(--t-fast);}
+  .field input:hover,.field select:hover,.field textarea:hover{border-color:#cfc8b2;}
+  .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--gold-500);box-shadow:0 0 0 4px rgba(242,183,5,.18);}
+  .field select:disabled,.field input:disabled{background:#f3f1ea;color:#8a8f99;}
+  .field.v2-touched :invalid{border-color:var(--danger);background:#fff8f7;}
+  .field.v2-touched :invalid:focus{box-shadow:0 0 0 4px rgba(179,38,30,.14);}
+  .v2-err{display:none;color:var(--danger);font-size:12px;font-weight:600;margin-top:5px;}
+  .field.v2-touched:has(:invalid) .v2-err{display:block;animation:v2-fade var(--t-fast);}
+  .field input[type=number]{direction:ltr;text-align:right;}
+
+  /* أقسام فورم الاشتراك */
+  .form-grid.v2-sections{display:block;}
+  .v2-sec{border:1px solid var(--border);border-radius:14px;margin-bottom:14px;background:var(--surface);overflow:hidden;animation:v2-up var(--t-mid) var(--ease) both;}
+  .v2-sec-h{display:flex;align-items:center;gap:10px;padding:12px 16px;background:linear-gradient(180deg,#fff,var(--sand-50));
+    border-bottom:1px solid var(--border);font-weight:800;font-size:14px;color:var(--navy-900);}
+  .v2-sec-h i{font-style:normal;width:28px;height:28px;border-radius:8px;background:var(--navy-800);color:#fff;display:grid;place-items:center;font-size:14px;}
+  .v2-sec-b{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;padding:16px;}
+  .v2-sec-b .full{grid-column:1/-1;}
+  .v2-sec:nth-child(2){animation-delay:.05s}.v2-sec:nth-child(3){animation-delay:.1s}.v2-sec:nth-child(4){animation-delay:.15s}
+  .linked-block{animation:v2-up var(--t-mid) var(--ease);}
+
+  /* إشعارات Toast */
+  .toast-wrap{position:fixed;top:20px;inset-inline-start:20px;z-index:200;display:flex;flex-direction:column;gap:10px;max-width:min(380px,calc(100vw - 40px));}
+  .toast{background:#fff;color:var(--ink);border:1px solid var(--border);border-inline-start:5px solid var(--navy-600);border-radius:12px;
+    padding:13px 16px;font-size:13.5px;font-weight:600;box-shadow:var(--shadow-lg);animation:v2-pop var(--t-mid) var(--ease);}
+  .toast.ok,.toast.success{border-inline-start-color:var(--success);}
+  .toast.error{border-inline-start-color:var(--danger);background:#fff8f7;}
+  .toast.warn,.toast.warning{border-inline-start-color:var(--gold-500);}
+  .toast::before{margin-inline-end:8px;font-weight:800;}
+  .toast.ok::before,.toast.success::before{content:"✓";color:var(--success);}
+  .toast.error::before{content:"✕";color:var(--danger);}
+  .toast.warn::before,.toast.warning::before{content:"!";color:var(--warn);}
+  .sync-pill,.page-loading,.page-inline-loading{animation:v2-fade var(--t-fast);}
+
+  /* علامة نجاح متحركة */
+  .v2-check{width:64px;height:64px;margin:0 auto 12px;display:block;}
+  .v2-check circle{fill:none;stroke:var(--success);stroke-width:4;stroke-dasharray:166;stroke-dashoffset:166;animation:v2-draw .5s ease forwards;}
+  .v2-check path{fill:none;stroke:var(--success);stroke-width:5;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:48;stroke-dashoffset:48;animation:v2-draw .35s .35s ease forwards;}
+  @keyframes v2-draw{to{stroke-dashoffset:0}}
+
+  /* هياكل التحميل */
+  .page-inline-loading,.page-loading{background:linear-gradient(90deg,#eceae1 25%,#f7f5ee 37%,#eceae1 63%);background-size:300% 100%;animation:v2-shimmer 1.3s linear infinite;border-radius:12px;}
+
+  /* موبايل */
+  .menu-toggle{box-shadow:var(--shadow);margin-bottom:14px;}
+  @media (max-width:900px){.v2-sec-b{grid-template-columns:1fr;} .main{padding:22px;}}
+  @media (max-width:760px){.sidebar{width:min(300px,86vw);} .sidebar.open{box-shadow:var(--shadow-lg);} .main{padding:16px;}
+    .modal{padding:18px;} .modal h3{margin:-18px -18px 16px;padding:16px 18px 12px;} .modal-actions{bottom:-18px;}}
+  @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important;}}
 </style>
 
 <script>
@@ -5229,6 +5343,86 @@
       })();
     }
   })();
+})();
+</script>
+<script>
+/* UI v2 — تحسينات عرض فقط. لا تلمس البيانات ولا الـ API ولا منطق الحفظ. */
+(function(){
+  'use strict';
+  const SECTIONS = [
+    ['👤','بيانات العميل',['leadId','customerName','nationalId','phone','gender','governorate']],
+    ['💳','بيانات الاشتراك',['packageType','subscriptionDate','groupName','responsiblePerson','omegaCode','subscriptionStatus','lotteryStatus','travelStatus']],
+    ['🏨','الرحلة والتسكين',['tripId','makkahHotelId','makkahRoomId','madinaHotelId','madinaRoomId']],
+    ['💰','بيانات الدفع',['subscriptionValue','downPayment','installmentMonths','installmentAmount','paymentDate']],
+    ['📝','معلومات إضافية',['notes']]
+  ];
+  function sectionize(grid){
+    if(grid.dataset.v2) return;
+    if(!grid.querySelector('[name="customerName"]') || !grid.querySelector('[name="subscriptionValue"]')) return;
+    grid.dataset.v2='1'; grid.classList.add('v2-sections');
+    const fields=[...grid.children].filter(el=>el.classList.contains('field'));
+    const used=new Set();
+    SECTIONS.forEach(([ico,title,keys])=>{
+      const items=keys.map(k=>fields.find(f=>f.querySelector('[name="'+k+'"]'))).filter(Boolean);
+      if(!items.length) return;
+      items.forEach(i=>used.add(i));
+      const sec=document.createElement('section'); sec.className='v2-sec';
+      sec.innerHTML='<div class="v2-sec-h"><i aria-hidden="true">'+ico+'</i>'+title+'</div><div class="v2-sec-b"></div>';
+      const body=sec.lastChild; items.forEach(i=>body.appendChild(i)); grid.appendChild(sec);
+    });
+    // أي حقل غير مصنّف يفضل ظاهر في قسم إضافي (مفيش حقل بيختفي)
+    const rest=fields.filter(f=>!used.has(f));
+    if(rest.length){ const sec=document.createElement('section'); sec.className='v2-sec';
+      sec.innerHTML='<div class="v2-sec-h"><i aria-hidden="true">➕</i>حقول أخرى</div><div class="v2-sec-b"></div>';
+      rest.forEach(f=>sec.lastChild.appendChild(f)); grid.appendChild(sec); }
+  }
+  function enhanceFields(root){
+    root.querySelectorAll('.field').forEach(f=>{
+      if(f.dataset.v2f) return; f.dataset.v2f='1';
+      const el=f.querySelector('input[required],select[required],textarea[required]');
+      if(el){ const m=document.createElement('div'); m.className='v2-err'; m.setAttribute('role','alert');
+        m.textContent='هذا الحقل مطلوب'; f.appendChild(m); }
+    });
+  }
+  document.addEventListener('focusout',e=>{
+    const f=e.target.closest&&e.target.closest('.field'); if(f&&e.target.matches('input,select,textarea')) f.classList.add('v2-touched');
+  });
+  document.addEventListener('submit',e=>{
+    const form=e.target; if(!form.querySelectorAll) return;
+    form.querySelectorAll('.field').forEach(f=>f.classList.add('v2-touched'));
+    const bad=form.querySelector(':invalid'); if(bad) bad.focus({preventScroll:false});
+  },true);
+  // Enter ينقل للحقل التالي بدل ما يحفظ بالغلط (ما عدا الملاحظات والأزرار)
+  document.addEventListener('keydown',e=>{
+    if(e.key!=='Enter'||e.isComposing) return;
+    const t=e.target; if(!t.matches||!t.matches('.modal input:not([type=file]):not([type=checkbox])')) return;
+    const all=[...t.form.querySelectorAll('input:not([type=hidden]):not([type=file]),select,textarea')].filter(x=>!x.disabled&&x.offsetParent);
+    const i=all.indexOf(t); if(i>-1&&i<all.length-1){ e.preventDefault(); all[i+1].focus(); }
+  });
+  // عدّاد الأرقام للإحصائيات (مرة واحدة لكل عنصر، وبس للأرقام الصحيحة)
+  function countUp(el){
+    if(el.dataset.v2c) return; el.dataset.v2c='1';
+    const txt=el.textContent.trim(); if(!/^\d{1,7}$/.test(txt)) return;
+    const end=+txt; if(end<2||matchMedia('(prefers-reduced-motion:reduce)').matches) return;
+    const t0=performance.now(), d=700;
+    (function step(t){ const p=Math.min(1,(t-t0)/d); el.textContent=Math.round(end*(1-Math.pow(1-p,3)));
+      if(p<1) requestAnimationFrame(step); else el.textContent=txt; })(t0);
+  }
+  function scan(node){
+    if(!node||node.nodeType!==1) return;
+    node.querySelectorAll&&node.querySelectorAll('.form-grid').forEach(sectionize);
+    if(node.matches&&node.matches('.form-grid')) sectionize(node);
+    if(node.closest&&node.closest('.modal')||node.matches&&node.matches('.modal')) enhanceFields(node.closest('.modal')||node);
+    node.querySelectorAll&&node.querySelectorAll('.stat-card .num,.stat-number').forEach(countUp);
+    node.querySelectorAll&&node.querySelectorAll('.dash-section-card:not([tabindex])').forEach(c=>{c.tabIndex=0;c.setAttribute('role','button');
+      c.addEventListener('keydown',ev=>{ if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); c.click(); } }); });
+  }
+  new MutationObserver(ms=>ms.forEach(m=>m.addedNodes.forEach(scan))).observe(document.body,{childList:true,subtree:true});
+  // تلميحات للقائمة الجانبية + زر الحفظ يعرض حالة التحميل أثناء الإرسال
+  new MutationObserver(ms=>ms.forEach(m=>{ const b=m.target;
+    if(b.matches&&b.matches('.modal button[type=submit]')) b.classList.toggle('is-loading', b.disabled); }))
+    .observe(document.body,{attributes:true,attributeFilter:['disabled'],subtree:true});
+  document.addEventListener('mouseover',e=>{ const n=e.target.closest&&e.target.closest('.nav-item'); if(n&&!n.title) n.title=n.textContent.trim(); });
 })();
 </script>
 </body>
