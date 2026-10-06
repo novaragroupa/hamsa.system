@@ -325,7 +325,8 @@
   .analytics-filterbar{display:flex;gap:10px;flex-wrap:wrap;flex:1;}
   .analytics-filter{padding:9px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:13px;background:#fff;
     color:var(--navy-800);min-width:140px;}
-  .widgets-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;}
+  .widgets-grid{display:grid;grid-template-columns:1fr;gap:16px;}
+  .widgets-grid>.widget-card{min-width:0;width:100%;}
   .widget-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;text-align:right;}
   .widget-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:8px;}
   .widget-head h4{margin:0;font-size:14px;font-weight:800;color:var(--navy-900);}
