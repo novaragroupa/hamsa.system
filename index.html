@@ -705,6 +705,7 @@
         {key:'notes', label:'ملاحظات', type:'textarea'},
       ]},
 
+    targets:{ title:'التارجت', icon:'🏁', roles:['admin','pr_manager','pr_leader','pr_member','analyst'], fields:[]},
     winners:{ title:'الفائزون', icon:'🏆', roles:['admin','pr_manager','pr_leader','pr_member','accommodation','accounting'], fields:[]},
   };
 
@@ -778,7 +779,8 @@
     accounting: ['admin'],
     user_permissions: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','callcenter','accommodation','system','analyst','accounting','reception'],
     app_settings: ['admin','pr_in','accommodation','system'],
-    edit_logs: ['admin','pr_leader']
+    edit_logs: ['admin','pr_leader'],
+    targets: ['admin','pr_manager','pr_leader','pr_member','analyst']
   };
   function canReadTable(t){
     const role = state.user && state.user.role;
@@ -2030,8 +2032,8 @@
 
   function analyticsAccessibleModules(){
     if(state.user.role==='accommodation') return Object.entries(MODULES).filter(([k])=>['accommodation','teams','employees','indoor_leads','pr_member_data','subscriptions','winners'].includes(k));
-    if(['admin','analyst'].includes(state.user.role)) return Object.entries(MODULES).filter(([k])=>!['companies','callcenter_payments','indoor_data'].includes(k));
-    return accessibleModules();
+    if(['admin','analyst'].includes(state.user.role)) return Object.entries(MODULES).filter(([k])=>!['companies','callcenter_payments','indoor_data','targets'].includes(k));
+    return accessibleModules().filter(([k])=>k!=='targets');
   }
 
   async function getSetting(key){
@@ -2052,7 +2054,7 @@
   const MODULE_GROUP_OF = {
     teams:'admin', employees:'admin',
     companies:'pr', visits:'pr', indoor_leads:'pr', indoor_data:'pr', pr_member_data:'pr',
-    callcenter_feedback:'ops', callcenter_payments:'ops', accommodation:'ops', trips_hub:'ops',
+    callcenter_feedback:'ops', callcenter_payments:'ops', accommodation:'ops', trips_hub:'ops', targets:'pr',
     subscriptions:'ops', winners:'ops'
   };
   const GROUP_LABELS = { main:'نظرة عامة', pr:'العلاقات العامة', ops:'التشغيل والحجوزات', admin:'الإدارة والموارد البشرية' };
@@ -2148,6 +2150,7 @@
     else if(state.view==='analytics') await renderAnalytics(page, analyticsAccessibleModules());
     else if(state.view==='accommodation') await renderAccommodationSection(page);
     else if(state.view==='trips_hub') await renderTripsHub(page);
+    else if(state.view==='targets') await renderTargetsSection(page);
     else if(state.view==='winners') await renderWinnersSection(page);
     else if(state.view==='callcenter_feedback') await renderFeedbackSection(page);
     else if(state.view==='indoor_leads') await renderIndoorLeadsSection(page);
@@ -3691,6 +3694,186 @@
       }
       return `<td><input class="cell-input" data-id="${row.id}" data-key="${f.key}" value="${esc(row[f.key]||'')}"/></td>`;
     }).join('')}<td><button class="icon-btn del" data-delrow="${row.id}">🗑️</button>${histBtn('indoor_data', row.id)}</td></tr>`;
+  }
+
+
+  /* ---------------- قسم التارجت ---------------- */
+  const TG_UMRAH = ['عمرة كاش','عمرة قسط','عمرة تيسير','تيسير رمضان'];
+  const TG_HAJJ = ['حج قرعة تيسير','حج قرعة عادي','حج سياحي'];
+  const TG_ALL = TG_UMRAH.concat(TG_HAJJ);
+  function tgPad(n){ return String(n).padStart(2,'0'); }
+  function tgIso(d){ return d.getFullYear()+'-'+tgPad(d.getMonth()+1)+'-'+tgPad(d.getDate()); }
+  function tgParse(s){ const m=String(s||'').match(/^(\d{4})-(\d{2})-(\d{2})/); return m? new Date(+m[1],+m[2]-1,+m[3]) : new Date(); }
+  // بداية الأسبوع = السبت
+  function tgWeekStart(iso){ const d=tgParse(iso); d.setDate(d.getDate()-((d.getDay()+1)%7)); return tgIso(d); }
+  function tgPeriod(p){
+    if(p.type==='weekly'){
+      const s=tgWeekStart(p.day), e=tgParse(s); e.setDate(e.getDate()+6);
+      return {key:s, from:s, to:tgIso(e), label:'الأسبوع من '+fmtDate(s)+' إلى '+fmtDate(tgIso(e))};
+    }
+    const [y,m]=p.month.split('-').map(Number);
+    const last=new Date(y,m,0).getDate();
+    return {key:p.month, from:p.month+'-01', to:p.month+'-'+tgPad(last), label:'شهر '+tgPad(m)+'/'+y};
+  }
+  function tgShift(p, dir){
+    if(p.type==='weekly'){ const d=tgParse(tgWeekStart(p.day)); d.setDate(d.getDate()+7*dir); p.day=tgIso(d); }
+    else { const [y,m]=p.month.split('-').map(Number); const d=new Date(y,m-1+dir,1); p.month=d.getFullYear()+'-'+tgPad(d.getMonth()+1); }
+  }
+  function tgGoals(rec){ const g=(rec&&rec.goals)||{}; return (typeof g==='object')? g : (()=>{ try{ return JSON.parse(g)||{}; }catch(_){ return {}; } })(); }
+  function tgCount(goals, list){ return list.reduce((s,k)=>s+(Number(goals[k])||0),0); }
+
+  async function renderTargetsSection(page){
+    if(!canViewModule('targets')) return;
+    await getDataMany(['targets','employees','teams','subscriptions']);
+    const role = state.user.role;
+    const canManage = ['admin','pr_manager'].includes(role);
+    const isMember = role==='pr_member';
+    const now = todayISO();
+    state.tgPeriod = state.tgPeriod || {type:'monthly', month:now.slice(0,7), day:now};
+    const P = state.tgPeriod, per = tgPeriod(P);
+
+    const targets = cache.targets||[];
+    const ratesRec = targets.find(r=>r.kind==='rates') || {};
+    const rU = Number(ratesRec.umrahRate)||0, rH = Number(ratesRec.hajjRate)||0;
+
+    const subs = (await filterPRData('subscriptions', cache.subscriptions||[])).filter(s=>
+      s.subscriptionStatus!=='ملغي' && String(s.subscriptionDate||'').slice(0,10)>=per.from && String(s.subscriptionDate||'').slice(0,10)<=per.to);
+    const prDepts = new Set([ROLE_LABELS.pr_manager, ROLE_LABELS.pr_leader, ROLE_LABELS.pr_member, ROLE_LABELS.pr_in]);
+    let emps = (cache.employees||[]).filter(e=>e.status!=='inactive');
+    if(isMember){ const me=await currentEmployeeFresh(); emps = emps.filter(e=>me && String(e.id)===String(me.id)); }
+    else emps = emps.filter(e=>prDepts.has(e.department) || (e.team && subs.some(s=>sameName(s.responsiblePerson,e.name))));
+
+    const achievedFor = list=>{
+      const by={}; TG_ALL.forEach(k=>by[k]=0);
+      list.forEach(s=>{ if(by[s.packageType]!==undefined) by[s.packageType]++; });
+      return by;
+    };
+    const targetRec = (scopeType, name)=> targets.find(r=>r.kind==='target' && r.scopeType===scopeType && r.periodType===P.type && String(r.periodKey)===per.key
+      && (scopeType==='team' ? normTeam(r.teamName)===normTeam(name) : sameName(r.employeeName,name)));
+    const incentive = ach => tgCount(ach,TG_UMRAH)*rU + tgCount(ach,TG_HAJJ)*rH;
+    const cell = (g,a)=> g ? `<span style="font-weight:700;color:${a>=g?'var(--success)':'var(--navy-800)'};">${a}</span> / ${g}` : (a? `<b>${a}</b>` : '<span style="color:var(--muted);">—</span>');
+    const pct = (a,g)=> g? Math.min(100,Math.round(a/g*100)) : 0;
+
+    const teamsMap = {};
+    emps.forEach(e=>{ const t=normTeam(e.team)||'بدون فريق'; (teamsMap[t]=teamsMap[t]||[]).push(e); });
+    const teamNames = Object.keys(teamsMap).sort((a,b)=>a.localeCompare(b,'ar'));
+
+    const empRow = e=>{
+      const rec = targetRec('employee', e.name), g = tgGoals(rec);
+      const ach = achievedFor(subs.filter(s=>sameName(s.responsiblePerson,e.name)));
+      const gu=tgCount(g,TG_UMRAH), gh=tgCount(g,TG_HAJJ), au=tgCount(ach,TG_UMRAH), ah=tgCount(ach,TG_HAJJ);
+      const tg=gu+gh, ta=au+ah;
+      return `<tr><td style="font-weight:700;">${esc(e.name)}</td>
+        ${TG_ALL.map(k=>`<td style="text-align:center;">${cell(Number(g[k])||0, ach[k])}</td>`).join('')}
+        <td style="text-align:center;">${cell(gu,au)}</td><td style="text-align:center;">${cell(gh,ah)}</td>
+        <td style="min-width:110px;"><div class="progress-track"><div class="progress-fill" style="width:${pct(ta,tg)}%;background:${tg&&ta>=tg?'var(--success)':'var(--navy-600)'};"></div></div><div style="font-size:11px;color:var(--muted);margin-top:3px;">${tg? pct(ta,tg)+'%':'لا يوجد تارجت'}</div></td>
+        <td style="text-align:center;"><b>${money_(incentive(ach))}</b></td>
+        ${canManage? `<td><button class="icon-btn" data-tgedit="employee" data-tgname="${esc(e.name)}">🎯 تحديد</button></td>`:''}</tr>`;
+    };
+
+    const teamCards = teamNames.map(t=>{
+      const members = teamsMap[t];
+      const memberSubs = subs.filter(s=>members.some(e=>sameName(s.responsiblePerson,e.name)));
+      const ach = achievedFor(memberSubs);
+      const sumGoals = {}; TG_ALL.forEach(k=>{ sumGoals[k]=members.reduce((s,e)=>s+(Number(tgGoals(targetRec('employee',e.name))[k])||0),0); });
+      const tRec = targetRec('team', t);
+      const g = tRec ? tgGoals(tRec) : sumGoals;
+      const gu=tgCount(g,TG_UMRAH), gh=tgCount(g,TG_HAJJ), au=tgCount(ach,TG_UMRAH), ah=tgCount(ach,TG_HAJJ);
+      return `<div class="card">
+        <h3>🧩 ${esc(t)} <span class="badge ${tRec?'gold':'gray'}">${tRec?'تارجت محدد للفريق':'مجموع تارجت الأعضاء'}</span></h3>
+        <div class="trip-stats">
+          <div class="trip-stat"><b>${gu+gh}</b><span>إجمالي التارجت</span></div>
+          <div class="trip-stat"><b>${au+ah}</b><span>المحقق</span></div>
+          <div class="trip-stat ${(gu+gh)&&(au+ah)>=(gu+gh)?'full':'remaining'}"><b>${Math.max(gu+gh-au-ah,0)}</b><span>المتبقي</span></div>
+          <div class="trip-stat"><b>${money_(incentive(ach))}</b><span>إجمالي الحوافز</span></div>
+        </div>
+        <div class="progress-track"><div class="progress-fill" style="width:${pct(au+ah,gu+gh)}%;"></div></div>
+        ${canManage? `<div style="margin-top:10px;"><button class="icon-btn" data-tgedit="team" data-tgname="${esc(t)}">🎯 تحديد تارجت الفريق</button>${tRec?` <button class="icon-btn del" data-tgdel="${esc(tRec.id)}">↩️ الرجوع للمجموع التلقائي</button>`:''}</div>`:''}
+        <div class="table-wrap" style="margin-top:12px;"><table>
+          <thead><tr><th>${isMember?'الاسم':'الموظف'}</th>${TG_ALL.map(k=>`<th style="text-align:center;">${esc(k)}</th>`).join('')}<th style="text-align:center;">إجمالي عمرة</th><th style="text-align:center;">إجمالي حج</th><th>التقدم</th><th style="text-align:center;">الحافز</th>${canManage?'<th></th>':''}</tr></thead>
+          <tbody>
+            <tr style="background:var(--sand-100);font-weight:800;"><td>إجمالي الفريق</td>${TG_ALL.map(k=>`<td style="text-align:center;">${cell(Number(g[k])||0, ach[k])}</td>`).join('')}<td style="text-align:center;">${cell(gu,au)}</td><td style="text-align:center;">${cell(gh,ah)}</td><td></td><td style="text-align:center;">${money_(incentive(ach))}</td>${canManage?'<td></td>':''}</tr>
+            ${members.sort((a,b)=>String(a.name).localeCompare(String(b.name),'ar')).map(empRow).join('')}
+          </tbody></table></div>
+      </div>`;
+    }).join('');
+
+    page.innerHTML = `
+      <div class="page-head"><h2>🏁 التارجت والحوافز</h2></div>
+      <div class="card" style="padding:14px 20px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <button type="button" class="btn-secondary ${P.type==='weekly'?'active':''}" data-tgtype="weekly" style="flex:none;padding:8px 16px;">أسبوعي</button>
+          <button type="button" class="btn-secondary ${P.type==='monthly'?'active':''}" data-tgtype="monthly" style="flex:none;padding:8px 16px;">شهري</button>
+          <button class="icon-btn" id="tg-prev">→ السابق</button>
+          <b>${esc(per.label)}</b>
+          <button class="icon-btn" id="tg-next">التالي ←</button>
+          ${P.type==='weekly' ? `<input type="date" id="tg-day" value="${esc(P.day)}" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:10px;"/>` : `<input type="month" id="tg-month" value="${esc(P.month)}" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:10px;"/>`}
+        </div>
+        <div style="margin-top:10px;font-size:13px;color:var(--navy-800);">
+          الحافز: <b>${money_(rU)}</b> على كل عميل عمرة (أي باقة عمرة / تيسير رمضان) • <b>${money_(rH)}</b> على كل عميل حج.
+          ${canManage? ` <button class="icon-btn" id="tg-rates">✏️ تعديل الأسعار</button>`:''}
+        </div>
+      </div>
+      <div class="assumption-note">المحقق = عدد الاشتراكات (غير الملغاة) اللي تاريخ اشتراكها داخل الفترة المختارة وبنفس نوع الباقة. ${isMember?'':'تيسير رمضان محسوب ضمن العمرة.'}</div>
+      ${teamCards || `<div class="card"><div class="empty-state"><div class="big">🏁</div>لا يوجد موظفون لعرضهم</div></div>`}`;
+
+    page.querySelectorAll('[data-tgtype]').forEach(b=>b.addEventListener('click',()=>{ P.type=b.dataset.tgtype; render(); }));
+    document.getElementById('tg-prev').addEventListener('click',()=>{ tgShift(P,-1); render(); });
+    document.getElementById('tg-next').addEventListener('click',()=>{ tgShift(P,1); render(); });
+    const di=document.getElementById('tg-day'); if(di) di.addEventListener('change',()=>{ P.day=di.value||todayISO(); render(); });
+    const mi=document.getElementById('tg-month'); if(mi) mi.addEventListener('change',()=>{ P.month=mi.value||todayISO().slice(0,7); render(); });
+    const rb=document.getElementById('tg-rates'); if(rb) rb.addEventListener('click',()=>openTargetRatesForm(ratesRec));
+    page.querySelectorAll('[data-tgedit]').forEach(b=>b.addEventListener('click',()=>{
+      const st=b.dataset.tgedit, name=b.dataset.tgname;
+      openTargetForm(st, name, per, P.type, targetRec(st,name));
+    }));
+    page.querySelectorAll('[data-tgdel]').forEach(b=>b.addEventListener('click', async ()=>{
+      if(!confirm('حذف تارجت الفريق والرجوع لمجموع تارجت الأعضاء؟')) return;
+      await apiDelete('targets', b.dataset.tgdel); render();
+    }));
+  }
+
+  function openTargetRatesForm(rec){
+    const bg=document.createElement('div'); bg.className='modal-bg';
+    bg.innerHTML=`<div class="modal"><h3>💰 أسعار الحوافز</h3><form><div class="form-grid">
+      <div class="field"><label>حافز كل عميل عمرة</label><input name="umrahRate" type="number" min="0" step="any" value="${esc(rec.umrahRate||'')}" required/></div>
+      <div class="field"><label>حافز كل عميل حج</label><input name="hajjRate" type="number" min="0" step="any" value="${esc(rec.hajjRate||'')}" required/></div>
+      </div><div class="modal-actions"><button type="button" class="btn-secondary" id="c">إلغاء</button><button type="submit" class="btn-primary btn-gold">حفظ</button></div></form></div>`;
+    document.body.appendChild(bg);
+    bg.querySelector('#c').addEventListener('click',()=>bg.remove());
+    bg.addEventListener('click',e=>{ if(e.target===bg) bg.remove(); });
+    bg.querySelector('form').addEventListener('submit', async e=>{
+      e.preventDefault(); const guard=submitGuard(e.target); if(!guard.ok) return;
+      try{
+        const fd=new FormData(e.target);
+        await apiAdd('targets', {...rec, id:'tg_rates', kind:'rates', umrahRate:fd.get('umrahRate'), hajjRate:fd.get('hajjRate')});
+        bg.remove(); render();
+      }catch(err){ alert(err.message||'تعذر الحفظ'); guard.release(); }
+    });
+  }
+
+  function openTargetForm(scopeType, name, per, periodType, rec){
+    const g=tgGoals(rec);
+    const bg=document.createElement('div'); bg.className='modal-bg';
+    bg.innerHTML=`<div class="modal"><h3>🎯 تارجت ${scopeType==='team'?'الفريق':'الموظف'}: ${esc(name)}</h3>
+      <div class="assumption-note">${periodType==='weekly'?'أسبوعي':'شهري'} — ${esc(per.label)}. اترك الخانة 0 أو فاضية لو مفيش تارجت للنوع ده.</div>
+      <form><div class="form-grid">${TG_ALL.map((k,i)=>`<div class="field"><label>${esc(k)}</label><input type="number" min="0" step="1" data-g="${i}" value="${esc(g[k]||'')}"/></div>`).join('')}</div>
+      <div class="modal-actions"><button type="button" class="btn-secondary" id="c">إلغاء</button><button type="submit" class="btn-primary btn-gold">حفظ</button></div></form></div>`;
+    document.body.appendChild(bg);
+    bg.querySelector('#c').addEventListener('click',()=>bg.remove());
+    bg.addEventListener('click',e=>{ if(e.target===bg) bg.remove(); });
+    bg.querySelector('form').addEventListener('submit', async e=>{
+      e.preventDefault(); const guard=submitGuard(e.target); if(!guard.ok) return;
+      try{
+        const goals={};
+        TG_ALL.forEach((k,i)=>{ const v=Number(bg.querySelector('[data-g="'+i+'"]').value)||0; if(v>0) goals[k]=v; });
+        const id = rec ? rec.id : ['tg',scopeType,normName(name).replace(/\s+/g,'_'),periodType,per.key].join('|');
+        const row = {...(rec||{}), id, kind:'target', scopeType, periodType, periodKey:per.key, goals};
+        if(scopeType==='team') row.teamName=name; else row.employeeName=name;
+        await apiAdd('targets', row);
+        bg.remove(); render();
+      }catch(err){ alert(err.message||'تعذر الحفظ'); guard.release(); }
+    });
   }
 
   /* ---------------- قسم الفائزون ---------------- */
