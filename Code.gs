@@ -219,7 +219,7 @@ const ALL_TABLES = [
   'users','teams','employees','companies','visits','indoor_leads','indoor_data',
   'callcenter_feedback','callcenter_payments','accommodation','pr_member_data',
   'subscriptions','trips','trip_hotels','accom_hotels','accom_rooms','accom_guests',
-  'dashboards','widgets','accounting','app_settings','edit_logs','user_permissions'
+  'dashboards','widgets','accounting','app_settings','edit_logs','user_permissions','targets'
 ];
 
 const TABLE_READ_ROLES = {
@@ -249,6 +249,8 @@ const TABLE_READ_ROLES = {
   app_settings: ['admin','pr_in','accommodation','system'],
   // سجل التعديلات: القراءة للأدمن ورئيس الفريق فقط (والتصفية حسب الفريق في filterRowsForSession).
   edit_logs: ['admin','pr_leader'],
+  // التارجت: القراءة للأدمن والمدير العام للعلاقات العامة والمحلل ورئيس الفريق والعضو (التصفية في filterRowsForSession).
+  targets: ['admin','pr_manager','pr_leader','pr_member','analyst'],
   // صلاحيات الموظفين: كل مستخدم يقرأ سجله هو بس (الأدمن يقرأ الكل) - التصفية في filterRowsForSession.
   user_permissions: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','callcenter','accommodation','system','analyst','accounting','reception']
 };
@@ -277,7 +279,9 @@ const TABLE_WRITE_ROLES = {
   // أي مستخدم مسجّل يقدر يضيف سطر في سجل التعديلات (بيتأمّن في enforceOwnership/canMutateTable).
   edit_logs: ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','callcenter','accommodation','system','analyst','accounting','reception'],
   // تعديل الصلاحيات للأدمن فقط.
-  user_permissions: ['admin']
+  user_permissions: ['admin'],
+  // تحديد التارجت والحوافز: الأدمن والمدير العام للعلاقات العامة فقط.
+  targets: ['admin','pr_manager']
 };
 
 const ANALYTICS_ROLES = ['admin','hr','pr_manager','pr_leader','pr_member','pr_in','pr_out','callcenter','accommodation','system','analyst'];
@@ -1014,6 +1018,18 @@ function filterRowsForSession(rows, table, session) {
     });
   }
 
+  if (table === 'targets') {
+    if (['admin','pr_manager','analyst'].indexOf(session.role) >= 0) return rows;
+    const tMyTeam = sessionOwnTeam(session);
+    const tMe = normName(sessionOwnName(session));
+    const tNames = session.role === 'pr_leader' ? employeeNamesForSession(session) : [tMe];
+    return rows.filter(function(r){
+      if (String(r.kind || '') === 'rates') return true;
+      if (String(r.scopeType || '') === 'team') return normTeam(r.teamName) === tMyTeam;
+      return tNames.indexOf(normName(r.employeeName)) >= 0;
+    });
+  }
+
   if (!isPRRole(session.role)) return rows;
 
   if (session.role === 'pr_manager') return rows;
@@ -1482,7 +1498,7 @@ const LOOKUP_CACHE_TABLES = ['users','employees','user_permissions','teams'];
 const DATA_CACHE_TABLES = [
   'subscriptions','indoor_leads','indoor_data','pr_member_data','visits','companies',
   'callcenter_feedback','callcenter_payments','accommodation','trips','trip_hotels',
-  'accom_hotels','accom_rooms','accom_guests','dashboards','widgets','accounting','app_settings'
+  'accom_hotels','accom_rooms','accom_guests','dashboards','widgets','accounting','app_settings','targets'
 ];
 const LOOKUP_CACHE_TTL = 30;      // ثواني
 const DATA_CACHE_TTL = 25;        // ثواني
