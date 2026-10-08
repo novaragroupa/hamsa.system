@@ -1611,7 +1611,13 @@ function getCachedRows(sheetName) {
 
 function invalidateCachedRows(sheetName) {
   delete _rowsMemo[sheetName];
-  if (isCachedTable(sheetName)) bumpCacheVer(sheetName);
+  if (isCachedTable(sheetName)) {
+    // مهم: لازم نفرّغ الكتابات المعلّقة في الشيت *قبل* ما نغيّر نسخة الكاش. من غير ده، قارئ تاني كان ممكن يشوف النسخة
+    // الجديدة، يقرأ الشيت قبل ما الكتابة تتثبّت، ويحفظ بيانات قديمة في الكاش 25 ثانية — وده سبب اختفاء سجلات
+    // (اتسجلت فعلًا) وظهورها تاني بعد الرفرش.
+    try { SpreadsheetApp.flush(); } catch (_) {}
+    bumpCacheVer(sheetName);
+  }
 }
 
 // يتركّب مرة واحدة: trigger "onEdit" بيمسح كاش الجدول لما حد يعدّل الشيت يدويًا.
