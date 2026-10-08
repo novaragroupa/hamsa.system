@@ -891,7 +891,7 @@
   }
   function rebasePending(table, rows, t0){
     const jobs = syncQ.filter(j=>j.table===table)
-      .concat(jobLog.filter(j=>j.table===table && j.doneAt>=t0-1500))
+      .concat(jobLog.filter(j=>j.table===table && j.doneAt>=t0-15000))
       .sort((a,b)=>a.seq-b.seq);
     if(!jobs.length) return rows;
     return jobs.reduce((acc,j)=>applyJobToRows(acc,j), rows);
@@ -1248,7 +1248,7 @@
   setInterval(()=>{
     if(!state.user || document.hidden) return;
     if(needRerender && !isUserBusy() && !syncQ.length){ needRerender=false; render(); }
-    if(!syncQ.length && !prefetching && Date.now()-lastRefresh>240000) refreshAll();
+    if(!syncQ.length && !prefetching && Date.now()-lastRefresh>120000) refreshAll();
   }, 30000);
 
   /* ---------------- عمليات البيانات (فورية + مزامنة في الخلفية) ---------------- */
