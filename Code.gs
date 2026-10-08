@@ -38,7 +38,13 @@ function doPost(e) {
     if (!session) return json({ok:false, error:'Unauthorized'});
 
     if (action === 'me') {
-      return json({ok:true, user:publicSessionUser(session)});
+      // تجديد الجلسة: كل نداء "me" بيرجّع توكن جديد بمدة كاملة، فالموظف الشغّال مايتفصلش وسط الشغل.
+      const renewed = createSession({
+        uid: String(session.uid), username: String(session.username || ''), name: String(session.name || ''),
+        role: String(session.role || ''), team: String(session.team || ''), employeeId: String(session.employeeId || ''),
+        sv: Number(session.sv || 1), exp: Math.floor(Date.now()/1000) + SESSION_TTL_SECONDS
+      });
+      return json({ok:true, user:publicSessionUser(session), session:renewed});
     }
 
     // ملخص التعديلات: بيرجّع تعديلات سجل واحد، أو عدّادات خفيفة بدل تحميل جدول edit_logs كله للمتصفح.
@@ -152,10 +158,11 @@ function doPost(e) {
         }
 
       } else if (action === 'upsert') {
-        const existing = getRowById(sheet, String(payload.id || ''));
+        const info = getRowInfoById(sheet, String(payload.id || ''));
+        const existing = info.obj;
         if (existing && !rowBelongsToSession(session, table, existing)) return json({ok:false, error:'Forbidden'}, 403);
         const cleanPayload = enforceOwnership(session, table, payload);
-        upsertRow(sheet, cleanPayload);
+        upsertRow(sheet, cleanPayload, info);
         invalidateCachedRows(table);
         if (table === 'employees') syncUserTeamFromEmployee(cleanPayload);
 
@@ -832,16 +839,22 @@ function publicSessionUser(s) {
   return {uid:s.uid, username:s.username, name:s.name, role:s.role, team:s.team || '', employeeId:s.employeeId || ''};
 }
 
+// جدول تحويل البايت لهكس جاهز مسبقًا (نفس الناتج بالظبط، لكن أسرع بكتير في حلقة الـ 5000 تكرار عند تسجيل الدخول).
+const HEX_TABLE = (function(){
+  const t = [];
+  for (let i = 0; i < 256; i++) t.push((i < 16 ? '0' : '') + i.toString(16));
+  return t;
+})();
+
 function sha256(text) {
   const bytes = Utilities.computeDigest(
     Utilities.DigestAlgorithm.SHA_256,
     String(text),
     Utilities.Charset.UTF_8
   );
-  return bytes.map(function(b) {
-    const v = (b < 0 ? b + 256 : b).toString(16);
-    return v.length === 1 ? '0' + v : v;
-  }).join('');
+  let out = '';
+  for (let i = 0; i < bytes.length; i++) out += HEX_TABLE[bytes[i] & 255];
+  return out;
 }
 
 function hmac(text, secret) {
@@ -1145,6 +1158,31 @@ function boardEditableBy(session, dashboard) {
   });
 }
 
+function prGuestMutationAllowed(session, payload, action) {
+  if (['upsert','batchUpsert','delete','batchDelete'].indexOf(action) < 0) return false;
+  payload = payload || {};
+  const subs = rowsById(getCachedRows('subscriptions'));
+  const guests = rowsById(getCachedRows('accom_guests'));
+  const okSub = function(subId) {
+    const s = subs[String(subId || '')];
+    return !!s && rowBelongsToSession(session, 'subscriptions', s);
+  };
+  if (action === 'upsert' || action === 'batchUpsert') {
+    const rows = action === 'upsert' ? [payload] : (Array.isArray(payload.rows) ? payload.rows : []);
+    return rows.every(function(r){
+      if (!r || !okSub(r.subscriptionId)) return false;
+      const ex = guests[String(r.id || '')];
+      return !ex || String(ex.subscriptionId || '') === String(r.subscriptionId || '');
+    });
+  }
+  const ids = action === 'delete' ? [String(payload.id || '')] : (Array.isArray(payload.ids) ? payload.ids.map(String) : []);
+  return ids.every(function(id){
+    const g = guests[id];
+    // نزيل اشتراكه اتحذف خلاص (يتيم) = مسموح ينضّف.
+    return !g || !subs[String(g.subscriptionId || '')] || okSub(g.subscriptionId);
+  });
+}
+
 function canMutateTable(session, table, payload, action) {
   // Generic users mutations are deliberately disabled. Use the dedicated
   // createEmployeeAccount / changePassword actions instead.
@@ -1158,6 +1196,12 @@ function canMutateTable(session, table, payload, action) {
 
   // الصلاحيات المخصّصة: للأدمن فقط.
   if (table === 'user_permissions') return String(session.role || '') === 'admin';
+
+  // نزلاء الغرف بيتولّدوا تلقائيًا من الاشتراك (syncSubscriptionGuest) حتى لو اللي حفظ الاشتراك من العلاقات العامة،
+  // فبنسمحلهم بكتابة/حذف سجل النزيل بس لو مربوط باشتراك هما أصلًا مسموحلهم يعدّلوه.
+  if (table === 'accom_guests' && isPRRole(String(session.role || ''))) {
+    return prGuestMutationAllowed(session, payload, action);
+  }
 
   if (!isWriteActionAllowed(session, table, payload, action)) return false;
 
@@ -1277,7 +1321,9 @@ function enforceOwnership(session, table, payload) {
       return String(r.id || '') === String(p.id || '');
     });
     if (!existing) throw new Error('غير مسموح بإضافة مشترك جديد — التسكين يقدر بس يعيّن رحلة/فندق/غرفة لمشترك موجود');
-    const allowedFields = ['tripId','hotelId','roomId'];
+    // الواجهة بتحفظ فندق/غرفة مكة والمدينة في حقول منفصلة (hotelId/roomId القديمين بيتفضّوا)،
+    // فلازم تكون كلها مسموحة هنا وإلا التسكين مايتحفظش.
+    const allowedFields = ['tripId','hotelId','roomId','makkahHotelId','makkahRoomId','madinaHotelId','madinaRoomId'];
     const merged = Object.assign({}, existing);
     allowedFields.forEach(function(k){
       if (Object.prototype.hasOwnProperty.call(p, k)) merged[k] = p[k];
@@ -1675,24 +1721,44 @@ function upsertRowsBatch(sheet, rows) {
     grid.forEach(function(r, i) { const id = String(r[idCol] || ''); if (id) idIndex[id] = i; });
   }
 
-  let firstChanged = grid.length, appended = false;
+  const origLen = grid.length;
+  const changed = {};
   rows.forEach(function(obj) {
     const id = String(obj.id || '');
-    const values = h.map(function(k) { return serializeCellValue(obj[k]); });
-    if (id && idIndex[id] !== undefined) {
-      const i = idIndex[id];
-      grid[i] = values;
-      if (i < firstChanged) firstChanged = i;
+    const i = id ? idIndex[id] : undefined;
+    if (i !== undefined) {
+      // الأعمدة الغايبة عن الصف المبعوت بتفضل زي ما هي (مايتمسحش بيانات).
+      const prev = grid[i];
+      grid[i] = h.map(function(k, c) {
+        return Object.prototype.hasOwnProperty.call(obj, k) ? serializeCellValue(obj[k]) : (c < prev.length ? prev[c] : '');
+      });
+      if (i < origLen) changed[i] = true;
     } else {
-      grid.push(values);
+      grid.push(h.map(function(k) { return serializeCellValue(obj[k]); }));
       if (id) idIndex[id] = grid.length - 1;
-      appended = true;
     }
   });
 
-  if (firstChanged >= grid.length && !appended) return;
-  const start = Math.min(firstChanged, grid.length);
-  sheet.getRange(start + 2, 1, grid.length - start, h.length).setValues(grid.slice(start));
+  // بنكتب الصفوف اللي اتغيّرت بس (مجموعات متصلة)، مش كل الشيت من أول صف اتغيّر لآخره —
+  // أسرع بكتير في الجداول الكبيرة، وأأمن لو حد عدّل صفوف تانية يدويًا في نفس اللحظة.
+  const idxs = Object.keys(changed).map(Number).sort(function(a,b){ return a-b; });
+  const runs = [];
+  idxs.forEach(function(i) {
+    const last = runs[runs.length - 1];
+    if (last && last[1] === i - 1) last[1] = i; else runs.push([i, i]);
+  });
+  if (runs.length > 30 && idxs.length) {
+    // تغييرات كتير ومتفرقة: كتابة واحدة أرخص من عشرات النداءات.
+    const from = idxs[0], to = origLen - 1;
+    sheet.getRange(from + 2, 1, to - from + 1, h.length).setValues(grid.slice(from, to + 1));
+  } else {
+    runs.forEach(function(r) {
+      sheet.getRange(r[0] + 2, 1, r[1] - r[0] + 1, h.length).setValues(grid.slice(r[0], r[1] + 1));
+    });
+  }
+  if (grid.length > origLen) {
+    sheet.getRange(origLen + 2, 1, grid.length - origLen, h.length).setValues(grid.slice(origLen));
+  }
 }
 
 function deleteRowsBatch(sheet, ids) {
@@ -1707,8 +1773,16 @@ function deleteRowsBatch(sheet, ids) {
   const rowsToDelete = [];
   values.forEach(function(v, i) { if (idSet[v]) rowsToDelete.push(i + 2); });
 
+  // بنمسح الصفوف المتجاورة بنداء واحد (deleteRows) بدل نداء لكل صف — الفرق كبير لما بيتمسح عشرات/مئات الصفوف.
   rowsToDelete.sort(function(a, b) { return b - a; });
-  rowsToDelete.forEach(function(r) { sheet.deleteRow(r); });
+  let i = 0;
+  while (i < rowsToDelete.length) {
+    let j = i;
+    while (j + 1 < rowsToDelete.length && rowsToDelete[j + 1] === rowsToDelete[j] - 1) j++;
+    const count = j - i + 1;
+    sheet.deleteRows(rowsToDelete[j], count);
+    i = j + 1;
+  }
 }
 
 /* ---------------- Sheets CRUD ---------------- */
@@ -1787,40 +1861,60 @@ function ensureHeaders(sheet, keys) {
   return h;
 }
 
-function upsertRow(sheet, obj) {
+// known (اختياري): نتيجة getRowInfoById — بتوفّر إعادة قراءة العناوين وعمود الـ id والصف (كانت 3 قراءات زيادة لكل حفظ).
+// الأعمدة اللي مش موجودة في obj بتفضل زي ما هي في الشيت (قبل كده كانت بتتمسح، وده كان بيضيّع مثلًا الراتب
+// والرقم القومي لما مدير العلاقات العامة يعدّل موظف، لأن الخادم مابيبعتهمش له).
+function upsertRow(sheet, obj, known) {
   const keys = Object.keys(obj || {});
   if (!keys.length) return;
-  const h = ensureHeaders(sheet, keys);
-  const idCol = h.indexOf('id') + 1;
-  const id = String(obj.id || '');
-  let row = sheet.getLastRow() + 1;
-  if (id && idCol) {
-    const values = sheet.getLastRow() > 1
-      ? sheet.getRange(2,idCol,sheet.getLastRow()-1,1).getValues().flat().map(String)
-      : [];
-    const found = values.indexOf(id);
-    if (found >= 0) row = found + 2;
+  let h, row = 0, existingVals = null;
+  if (known) {
+    h = known.h.slice();
+    const missing = keys.map(String).filter(function(k){ return /^[A-Za-z][A-Za-z0-9_]{0,59}$/.test(k) && h.indexOf(k) < 0; });
+    if (missing.length) {
+      sheet.getRange(1, h.length + 1, 1, missing.length).setValues([missing]);
+      h = h.concat(missing);
+    }
+    if (known.rowIndex) { row = known.rowIndex; existingVals = known.values; }
+  } else {
+    h = ensureHeaders(sheet, keys);
+    const idCol = h.indexOf('id') + 1;
+    const id = String(obj.id || '');
+    if (id && idCol && sheet.getLastRow() > 1) {
+      const ids = sheet.getRange(2,idCol,sheet.getLastRow()-1,1).getValues().flat().map(String);
+      const found = ids.indexOf(id);
+      if (found >= 0) {
+        row = found + 2;
+        existingVals = sheet.getRange(row, 1, 1, h.length).getValues()[0];
+      }
+    }
   }
-  const values = h.map(k => {
-    const v=obj[k];
-    return serializeCellValue(v);
+  if (!row) row = sheet.getLastRow() + 1;
+  const values = h.map(function(k, i) {
+    if (existingVals && !Object.prototype.hasOwnProperty.call(obj, k)) {
+      return i < existingVals.length ? existingVals[i] : '';
+    }
+    return serializeCellValue(obj[k]);
   });
   sheet.getRange(row,1,1,h.length).setValues([values]);
 }
 
-function getRowById(sheet, id) {
-  if (!id || sheet.getLastRow() < 2) return null;
+// بيرجّع {h, rowIndex, values, obj} في قراءتين بس (العناوين+عمود id، ثم الصف) بدل تكرارها.
+function getRowInfoById(sheet, id) {
   const h = headers(sheet);
+  if (!id || sheet.getLastRow() < 2) return {h:h, rowIndex:0, values:null, obj:null};
   const idCol = h.indexOf('id') + 1;
-  if (!idCol) return null;
-  const lastRow = sheet.getLastRow();
-  const idValues = sheet.getRange(2, idCol, lastRow - 1, 1).getValues().flat().map(String);
+  if (!idCol) return {h:h, rowIndex:0, values:null, obj:null};
+  const idValues = sheet.getRange(2, idCol, sheet.getLastRow() - 1, 1).getValues().flat().map(String);
   const found = idValues.indexOf(String(id));
-  if (found < 0) return null;
+  if (found < 0) return {h:h, rowIndex:0, values:null, obj:null};
   const rowIndex = found + 2;
-  const lastCol = sheet.getLastColumn();
-  const rowValues = sheet.getRange(rowIndex, 1, 1, lastCol).getValues()[0];
-  return rowValuesToObject(h, rowValues);
+  const rowValues = sheet.getRange(rowIndex, 1, 1, h.length).getValues()[0];
+  return {h:h, rowIndex:rowIndex, values:rowValues, obj:rowValuesToObject(h, rowValues)};
+}
+
+function getRowById(sheet, id) {
+  return getRowInfoById(sheet, id).obj;
 }
 
 function sanitizeCellValue(v) {
