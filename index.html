@@ -972,7 +972,9 @@
     try{
       const role = state.user && state.user.role;
       if(!role) return;
-      const need = tablesReadableByRole(role).filter(t=>!cache[t] && !inflight[t]);
+      // سجل التعديلات (edit_logs) بيكبر طول الوقت ومحدش محتاجه إلا لما يفتح "ملخص التعديلات" —
+      // فمابنحمّلوش مع باقي الجداول (كان بيبطّأ الدخول والتحديث لمدير النظام ورئيس الفريق).
+      const need = tablesReadableByRole(role).filter(t=>t!=='edit_logs' && !cache[t] && !inflight[t]);
       if(!need.length) return;
       prefetching = true; updateSyncStatus();
       const size = Math.max(1, Math.ceil(need.length/3));
@@ -1174,6 +1176,7 @@
     batchQueue.clear(); batchPromise = null;
     if(retryTimer){ clearTimeout(retryTimer); retryTimer=null; }
     syncPaused = false; prefetching = false; needRerender = false; flashText='';
+    histCounts = {}; histCountsAt = 0;
     lastRenderedView = null;
     Object.keys(viewScroll).forEach(k=>delete viewScroll[k]);
     updateSyncStatus();
@@ -1225,6 +1228,23 @@
   document.addEventListener('visibilitychange', ()=>{
     if(!document.hidden && state.user && !syncQ.length && Date.now()-lastRefresh>90000) refreshAll();
   });
+  // تجديد الجلسة (مدتها 4 ساعات من السيرفر): كل 30 دقيقة بنجدد التوكن عشان الموظف الشغّال مايتفصلش وسط الشغل.
+  let lastSessionRenew = Date.now();
+  async function renewSession(){
+    if(!state.user || !HOMSA_SESSION) return;
+    lastSessionRenew = Date.now();
+    try{
+      const d = await authRequest('me',{});
+      if(d.session){ HOMSA_SESSION = d.session; sessionStorage.setItem('homsa_session_token', HOMSA_SESSION); }
+    }catch(e){ console.warn('session renew failed', e); }
+  }
+  document.addEventListener('visibilitychange', ()=>{
+    // لو التاب كان مخفي فترة طويلة، بنجدد فورًا قبل ما التوكن يكون انتهى.
+    if(!document.hidden && state.user && Date.now()-lastSessionRenew>20*60*1000) renewSession();
+  });
+  setInterval(()=>{
+    if(state.user && Date.now()-lastSessionRenew>30*60*1000) renewSession();
+  }, 60000);
   setInterval(()=>{
     if(!state.user || document.hidden) return;
     if(needRerender && !isUserBusy() && !syncQ.length){ needRerender=false; render(); }
@@ -1237,9 +1257,28 @@
 
   /* ---------------- زر "ملخص التعديلات" بجانب أزرار التعديل/الحذف ---------------- */
   function canSeeHistory(){ return !!state.user && ['admin','pr_leader'].includes(state.user.role); }
+  // عدّادات "عدد مرات التعديل": بتتجاب من السيرفر كأرقام خفيفة (مش الجدول كله) في الخلفية.
+  let histCounts = {}, histCountsAt = 0, histCountsBusy = false;
+  async function loadHistCounts(){
+    if(!canSeeHistory() || histCountsBusy || !HOMSA_SESSION || Date.now()-histCountsAt<120000) return;
+    histCountsBusy = true;
+    try{
+      const gen = dataGen;
+      const r = await authRequest('history',{});
+      if(gen!==dataGen) return;
+      histCounts = r.counts || {}; histCountsAt = Date.now();
+      document.querySelectorAll('[data-hist]').forEach(b=>{
+        const n = histCounts[b.dataset.hist+'|'+b.dataset.hid] || 0;
+        let s = b.querySelector('sup');
+        if(n){ if(!s){ s=document.createElement('sup'); s.style.cssText='font-weight:700;margin-inline-start:2px;'; b.appendChild(s); } s.textContent=n; }
+        else if(s) s.remove();
+      });
+    }catch(e){ /* اختياري: لو فشل مايأثرش على الشغل */ }
+    finally{ histCountsBusy = false; }
+  }
   function histBtn(table, id, style){
     if(!canSeeHistory() || !id) return '';
-    const n = (cache.edit_logs||[]).filter(l=>l.table===table && String(l.recordId)===String(id) && l.action==='تعديل').length;
+    const n = histCounts[table+'|'+id] || 0;
     return `<button class="icon-btn" data-hist="${esc(table)}" data-hid="${esc(id)}" title="ملخص التعديلات" style="${style||''}">🕘${n?`<sup style="font-weight:700;margin-inline-start:2px;">${n}</sup>`:''}</button>`;
   }
   async function openHistoryModal(table, id){
@@ -1251,8 +1290,9 @@
     bg.addEventListener('click', e=>{ if(e.target===bg) bg.remove(); });
     const body = bg.querySelector('#hist-body');
     try{
-      if(!cacheTime.edit_logs || Date.now()-cacheTime.edit_logs>10000) cache.edit_logs = null;
-      const all = (await getData('edit_logs')).slice();
+      // بنطلب تعديلات السجل ده بس من السيرفر (بدل تحميل جدول سجل التعديلات كله).
+      await flushSyncQueue(4000);
+      const all = ((await authRequest('history',{table, recordId:String(id)})).rows || []).slice();
       logQ.forEach(x=>{ if(!all.some(r=>r.id===x.id)) all.push(x); });
       const rows = all.filter(l=>l.table===table && String(l.recordId)===String(id)).sort((a,b)=>String(b.at).localeCompare(String(a.at)));
       const edits = rows.filter(r=>r.action==='تعديل').length;
@@ -1804,6 +1844,7 @@
     if(main) main.scrollTop = keepTop!==null ? keepTop : (viewScroll[state.view]||0);
     lastRenderedView = state.view;
     if(first) prefetchAllData(); // بعد ظهور أول شاشة: باقي البيانات في الخلفية
+    setTimeout(loadHistCounts, 1500);
   }
 
   function updateActiveNav(){
@@ -5307,10 +5348,26 @@
     if(imgInput){
       imgInput.addEventListener('change', ()=>{
         const file = imgInput.files[0]; if(!file) return;
-        const reader = new FileReader();
-        reader.onload = ()=>{ imgInput.dataset.value = reader.result;
-          const prev = modalBg.querySelector('.photo-preview'); if(prev) prev.src = reader.result; };
-        reader.readAsDataURL(file);
+        // خلية جوجل شيت حدها 50,000 حرف: الصورة الأصلية (base64) كانت بتتخطاه فالحفظ بيفشل، وكمان بتتقل كل تحميل للموظفين.
+        // بنصغّر الصورة لـ 160px ونضغطها JPEG قبل الحفظ (حوالي 5–10KB).
+        const fail = ()=>{ alert('تعذر قراءة الصورة، جرّب صورة أخرى'); imgInput.value=''; };
+        const objUrl = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = ()=>{
+          try{
+            const S = 160, ratio = Math.min(1, S/Math.max(img.width, img.height));
+            const w = Math.max(1, Math.round(img.width*ratio)), h = Math.max(1, Math.round(img.height*ratio));
+            const c = document.createElement('canvas'); c.width = w; c.height = h;
+            const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0,0,w,h); ctx.drawImage(img,0,0,w,h);
+            let q = 0.8, out = c.toDataURL('image/jpeg', q);
+            while(out.length>30000 && q>0.3){ q -= 0.1; out = c.toDataURL('image/jpeg', q); }
+            imgInput.dataset.value = out;
+            const prev = modalBg.querySelector('.photo-preview'); if(prev) prev.src = out;
+          }catch(e){ fail(); }
+          URL.revokeObjectURL(objUrl);
+        };
+        img.onerror = ()=>{ URL.revokeObjectURL(objUrl); fail(); };
+        img.src = objUrl;
       });
     }
 
@@ -5533,6 +5590,7 @@
           if(data.ok){
             state.user=data.user;
             sessionStorage.setItem('homsa_session_user', JSON.stringify(data.user));
+            if(data.session){ HOMSA_SESSION=data.session; sessionStorage.setItem('homsa_session_token', HOMSA_SESSION); }
           } else {
             sessionStorage.removeItem('homsa_session_user'); sessionStorage.removeItem('homsa_session_token');
             HOMSA_SESSION=''; state.user=null; render();
