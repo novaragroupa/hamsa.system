@@ -1736,7 +1736,7 @@
     return await isTeamLeader();
   }
 
-  async function maybeCreateSubscriptionFromLead(lead){
+  async function maybeCreateSubscriptionFromLead(lead, tripId){
     if(lead.type!=='مهتم' || lead.status!=='مشترك') return;
     const subs=await getData('subscriptions');
     const receiptPart={omegaCode:lead.omegaCode||'', paymentDate:lead.paymentDate||'',
@@ -1751,6 +1751,7 @@
       Object.keys(receiptPart).forEach(k=>{
         if(String(receiptPart[k]) !== '' && String(existingSub[k]||'')!==String(receiptPart[k])) changed[k]=receiptPart[k];
       });
+      if(tripId && String(existingSub.tripId||'')!==String(tripId)) changed.tripId = tripId;
       if(!existingSub.gender && lead.gender) changed.gender = lead.gender;
       if(!existingSub.nationalId && lead.nationalId) changed.nationalId = lead.nationalId;
       if(Object.keys(changed).length) await apiUpdate('subscriptions',{...existingSub,...changed});
@@ -1762,7 +1763,8 @@
       gender:lead.gender||'', governorate:'', groupName:'',
       responsiblePerson:lead.responsiblePerson||'', subscriptionDate:todayISO(),
       lotteryStatus:'لم يُحسم بعد', travelStatus:'لم يسافر',
-      subscriptionStatus:'نشط', notes:lead.notes||''
+      subscriptionStatus:'نشط', notes:lead.notes||'',
+      tripId: tripId||''
     };
     await apiAdd('subscriptions',sub);
   }
@@ -5432,12 +5434,29 @@
       }
     }
 
+    // سؤال اختياري عن الرحلة وقت تحويل المهتم لمشترك (لمن عنده صلاحية الإضافة على الرحلة فقط).
+    let tripQHtml = '';
+    if(key==='indoor_leads' && canTripAssign() && canReadTable('trips')){
+      try{
+        await getDataMany(['trips','subscriptions']);
+        const tripsQ = (await getData('trips')).slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+        const subQ = id ? (cache.subscriptions||[]).find(x=>String(x.leadId||'')===String(id)) : null;
+        const onQ = row && row.type==='مهتم' && row.status==='مشترك';
+        tripQHtml = `<div class="field full" data-receipt-group="1" style="${onQ?'':'display:none;'}">
+          <label>الرحلة (اختياري)</label>
+          <select name="__tripId"><option value="">— بدون رحلة حاليًا —</option>
+            ${tripsQ.map(t=>`<option value="${esc(t.id)}" ${subQ && String(subQ.tripId||'')===String(t.id)?'selected':''}>${esc(linkLabel('trips',t))}</option>`).join('')}
+          </select></div>`;
+      }catch(_){ tripQHtml = ''; }
+    }
+
     const modalBg = document.createElement('div');
     modalBg.className = 'modal-bg';
     modalBg.innerHTML = `<div class="modal">
       <h3>${id? 'تعديل بيانات':'إضافة جديد'} — ${esc(mod.title)}</h3>
       <form id="mod-form"><div class="form-grid">
         ${mod.fields.filter(f=>!isAutoDateField(key,f)).map(f=>renderField(f, row, refOptions)).join('')}
+        ${tripQHtml}
       </div>
       <div class="modal-actions">
         <button type="button" class="btn-secondary" id="cancel-btn">إلغاء</button>
@@ -5709,7 +5728,7 @@
         }
 
         if(isNew) await apiAdd(key, newRow); else await apiUpdate(key, newRow);
-        if(key==='indoor_leads') await maybeCreateSubscriptionFromLead(newRow);
+        if(key==='indoor_leads') await maybeCreateSubscriptionFromLead(newRow, (modalBg.querySelector('[name="__tripId"]')||{}).value || '');
         if(key==='subscriptions') await syncSubscriptionGuest(newRow);
 
         if(key==='subscriptions'){
