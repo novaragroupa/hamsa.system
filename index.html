@@ -710,6 +710,12 @@
     targets:{ title:'التارجت', icon:'🏁', roles:['admin','pr_manager','pr_leader','pr_member','analyst'], fields:[]},
     winners:{ title:'الفائزون', icon:'🏆', roles:['admin','pr_manager','pr_leader','pr_member','accommodation','accounting'], fields:[]},
   };
+  // الاشتراكات الخارجية: نفس حقول الاشتراكات (من غير كود العميل لأنها مش جاية من مهتم)،
+  // المدير والتسكين بس يشوفوها ويضيفوا ويعدلوا. جدول مستقل (external_subscriptions).
+  MODULES.external_subscriptions = {
+    title:'الاشتراكات الخارجية', icon:'🌐', roles:['admin','accommodation'],
+    fields: MODULES.subscriptions.fields.filter(f=>f.key!=='leadId')
+  };
 
   const LEDGER_FIELDS = [
     {key:'clientName', label:'اسم العميل', type:'text', required:true},
@@ -771,6 +777,7 @@
     accommodation: ['admin','accommodation','system','analyst'],
     pr_member_data: ['admin','pr_manager','pr_leader','pr_member','analyst','accommodation'],
     subscriptions: ['admin','pr_manager','pr_leader','pr_member','analyst','accommodation','accounting'],
+    external_subscriptions: ['admin','accommodation'],
     trips: ['admin','accommodation','system','pr_manager','pr_leader','pr_member','analyst','accounting'],
     trip_hotels: ['admin','accommodation','system','pr_manager','pr_leader','pr_member','accounting'],
     accom_hotels: ['admin','accommodation','system','pr_manager','pr_leader','pr_member','analyst','accounting'],
@@ -2181,7 +2188,7 @@
 
   function analyticsAccessibleModules(){
     if(state.user.role==='accommodation') return Object.entries(MODULES).filter(([k])=>['accommodation','teams','employees','indoor_leads','pr_member_data','subscriptions','winners'].includes(k));
-    if(['admin','analyst'].includes(state.user.role)) return Object.entries(MODULES).filter(([k])=>!['companies','callcenter_payments','indoor_data','targets'].includes(k));
+    if(['admin','analyst'].includes(state.user.role)) return Object.entries(MODULES).filter(([k])=>!['companies','callcenter_payments','indoor_data','targets'].includes(k) && !(k==='external_subscriptions' && state.user.role!=='admin'));
     return accessibleModules().filter(([k])=>k!=='targets');
   }
 
@@ -2204,7 +2211,7 @@
     teams:'admin', employees:'admin',
     companies:'pr', visits:'pr', indoor_leads:'pr', indoor_data:'pr', pr_member_data:'pr',
     callcenter_feedback:'ops', callcenter_payments:'ops', accommodation:'ops', trips_hub:'ops', targets:'pr',
-    subscriptions:'ops', winners:'ops'
+    subscriptions:'ops', external_subscriptions:'ops', winners:'ops'
   };
   const GROUP_LABELS = { main:'نظرة عامة', pr:'العلاقات العامة', ops:'التشغيل والحجوزات', admin:'الإدارة والموارد البشرية' };
   const GROUP_ICONS = { pr:'🎯', ops:'🧳', admin:'🧩' };
