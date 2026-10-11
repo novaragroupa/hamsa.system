@@ -446,7 +446,7 @@ function isWriteActionAllowed(session, table, payload, action) {
   // مقفولة في صفحة الصلاحيات عن قصد). فبنسمح بالكتابة دي بس لو الصف مربوط بمهتم حالته
   // "مشترك" والموظف عنده صلاحية تعديل المهتمين، وفي التحديث بنسمح بحقول الإيصال بس.
   const RECEIPT_KEYS = ['omegaCode','paymentDate','packageType','subscriptionValue','installmentAmount',
-                        'installmentMonths','downPayment','gender','nationalId'];
+                        'installmentMonths','downPayment','gender','nationalId','tripId'];
   const leadConversionOk = function(row, existing) {
     if (table !== 'subscriptions') return false;
     const lid = String((row || {}).leadId || '');
