@@ -2144,6 +2144,15 @@
     const p = permMap(permRecordFor(currentEmployee()))[key];
     return p ? !!p[action] : null;
   }
+  // صلاحية إضافية: يضيف مشتركيه على الرحلة ثم يسكّنهم على فندق وغرفة من صفحة الرحلة.
+  // الافتراضي حسب الدور (نفس الأدوار اللي بتتعامل مع الاشتراكات/التسكين)، وبتتخصص من صفحة الصلاحيات.
+  const TRIP_ASSIGN_ROLES = ['admin','accommodation','system','pr_manager','pr_leader','pr_member'];
+  function canTripAssign(){
+    if(!state.user) return false;
+    if(state.user.role==='admin') return true;
+    const p = permMap(permRecordFor(currentEmployee())).trip_assign;
+    return p ? !!p.add : TRIP_ASSIGN_ROLES.includes(state.user.role);
+  }
   function canViewModule(key){
     const m = MODULES[key]; if(!m) return false;
     const v = hasPerm(key,'view');
@@ -2329,6 +2338,9 @@
     const customCount = rec ? Object.keys(permMap(rec)).length : 0;
 
     const editable = emp && rk && rk!=='admin';
+    const taDefOf = role=>TRIP_ASSIGN_ROLES.includes(role);
+    const taCur = e=>{ const sv=permMap(permRecordFor(e)).trip_assign; return sv ? !!sv.add : taDefOf(roleOf(e)); };
+    const taDef = editable ? taDefOf(rk) : false, taInit = editable ? taCur(emp) : false;
     const rowsHtml = editable ? gOrder.map(g=>`<tr class="pm-grp"><td colspan="7">${esc(GL[g])}</td></tr>` + groups[g].map(([k,m])=>{
       const c = effFor(emp,k,m), d = roleDef(k,m,rk);
       const scopeCell = SCOPE_FIELD[k]
@@ -2346,6 +2358,8 @@
       <style>
         .pm-grp td{background:var(--sand-100);font-weight:800;color:var(--navy-800);padding:8px 12px;}
         .pm-cell.pm-diff{background:#fff3d1;}
+        .pm-extra{margin-top:14px;padding:12px 14px;border:1.5px solid var(--line);border-radius:12px;}
+        .pm-extra.pm-diff{background:#fff3d1;}
         .pm-bar{position:sticky;bottom:0;margin-top:14px;padding:12px 16px;background:#fff;border:1.5px solid var(--line);border-radius:12px;
           display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;box-shadow:0 -4px 16px rgba(0,0,0,.06);}
         .pm-chip{display:inline-flex;gap:6px;align-items:center;background:var(--sand-100);border-radius:999px;padding:5px 12px;font-size:12.5px;font-weight:700;}
@@ -2379,6 +2393,10 @@
         <div class="table-wrap"><table><thead><tr><th>القسم</th>
           ${PERM_ACTIONS.map(([a,l])=>`<th style="text-align:center;">${ACT_ICON[a]} ${l}<br><input type="checkbox" data-col="${a}" title="تحديد/إلغاء العمود كله" style="width:16px;height:16px;margin-top:4px;"></th>`).join('')}
           <th style="text-align:center;">🔭 يشوف بيانات مين؟</th><th></th></tr></thead><tbody>${rowsHtml}</tbody></table></div>
+        <div class="pm-extra" id="perm-extra"><label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer;">
+          <input type="checkbox" id="perm-tripassign" data-def="${taDef?1:0}" data-init="${taInit?1:0}" ${taInit?'checked':''} style="width:18px;height:18px;margin-top:3px;"/>
+          <span><b>🧳 إضافة مشتركيه على الرحلة، ثم تسكينهم على فندق وغرفة</b><br>
+          <span style="font-size:12.5px;color:var(--muted);">من صفحة الرحلة: زر «إضافة مشترك للرحلة» واختيار الفندق ثم الغرفة. يقدر يتعامل مع المشتركين اللي يقدر يعدّلهم فقط (حسب نطاق «يشوف بيانات مين؟»).</span></span></label></div>
         <div style="margin-top:10px;font-size:12.5px;color:var(--muted);">الخلفية الذهبية = مختلف عن صلاحية الدور الافتراضية. تفعيل أي إذن يفعّل «عرض» تلقائيًا، وإلغاء «عرض» يلغي باقي الأذونات. التعديل والحذف ينطبقان على السجلات التي يراها الموظف في القسم.<br>🔭 عمود «يشوف بيانات مين؟» (المهتمون والمندوبون، الاشتراكات، البيانات والأرقام والروابط، تقارير الزيارات): يحدد هل يرى الموظف سجلات كل الموظفين، أو فريقه فقط، أو سجلاته هو فقط — ويُطبَّق من السيرفر على العرض والتعديل والحذف. قسم «الفائزون» يتبع نطاق الاشتراكات.</div>
         <div class="pm-bar"><span id="perm-state" style="font-weight:700;"></span>
           <span style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -2392,6 +2410,7 @@
 
     const boxes = [...page.querySelectorAll('input[data-k]')];
     const box = (k,a)=>boxes.find(x=>x.dataset.k===k && x.dataset.a===a);
+    const ta = document.getElementById('perm-tripassign');
     const sels = [...page.querySelectorAll('select[data-sk]')];
     const sel = k=>sels.find(x=>x.dataset.sk===k);
     const setVal = (k,a,val)=>{
@@ -2409,6 +2428,7 @@
         tr.querySelector('.pm-tag').style.display = (bs.some(b=>(b.checked?1:0)!==Number(b.dataset.def)) || (s && s.value!==s.dataset.sdef)) ? '' : 'none';
         if(bs.some(b=>(b.checked?1:0)!==Number(b.dataset.init)) || (s && s.value!==s.dataset.sinit)) dirty++;
       });
+      if(ta){ const d=(ta.checked?1:0); document.getElementById('perm-extra').classList.toggle('pm-diff', d!==Number(ta.dataset.def)); if(d!==Number(ta.dataset.init)) dirty++; }
       sels.forEach(s=>{ s.disabled = !box(s.dataset.sk,'view').checked; s.closest('td').classList.toggle('pm-diff', s.value!==s.dataset.sdef); });
       page.querySelectorAll('input[data-col]').forEach(h=>{ const bs=boxes.filter(b=>b.dataset.a===h.dataset.col && !b.disabled); h.checked = bs.length>0 && bs.every(b=>b.checked); });
       document.getElementById('perm-summary').innerHTML = [['view','يشوف'],['add','يضيف في'],['edit','يعدّل في'],['delete','يحذف من']]
@@ -2419,22 +2439,23 @@
     };
     boxes.forEach(b=>b.addEventListener('change', ()=>{ setVal(b.dataset.k, b.dataset.a, b.checked); refresh(); }));
     sels.forEach(s=>s.addEventListener('change', refresh));
+    if(ta) ta.addEventListener('change', refresh);
     page.querySelectorAll('input[data-col]').forEach(h=>h.addEventListener('change', ()=>{
       secs.forEach(([k])=>setVal(k, h.dataset.col, h.checked)); refresh(); }));
     page.querySelectorAll('[data-rowall]').forEach(b=>b.addEventListener('click', ()=>{
       const k=b.dataset.rowall; const all = PERM_ACTIONS.every(([a])=>{ const x=box(k,a); return x.disabled || x.checked; });
       PERM_ACTIONS.forEach(([a])=>setVal(k,a,!all)); refresh(); }));
-    const applyMap = fn=>{ secs.forEach(([k,m])=>{ const c=fn(k,m); const sc=sel(k); if(sc && c.scope) sc.value=c.scope; PERM_ACTIONS.forEach(([a])=>{ const b=box(k,a); if(b && !b.disabled) b.checked=!!c[a]; }); setVal(k,'view',!!c.view); PERM_ACTIONS.forEach(([a])=>{ if(a!=='view') setVal(k,a,!!c[a]&&!!c.view); }); }); refresh(); };
+    const applyMap = (fn, taVal)=>{ if(ta && taVal!==undefined) ta.checked=!!taVal; secs.forEach(([k,m])=>{ const c=fn(k,m); const sc=sel(k); if(sc && c.scope) sc.value=c.scope; PERM_ACTIONS.forEach(([a])=>{ const b=box(k,a); if(b && !b.disabled) b.checked=!!c[a]; }); setVal(k,'view',!!c.view); PERM_ACTIONS.forEach(([a])=>{ if(a!=='view') setVal(k,a,!!c[a]&&!!c.view); }); }); refresh(); };
     page.querySelectorAll('[data-preset]').forEach(b=>b.addEventListener('click', ()=>{
       const t=b.dataset.preset;
-      if(t==='role') applyMap((k,m)=>roleDef(k,m,rk));
-      else if(t==='all') applyMap(()=>({view:true,add:true,edit:true,delete:true,scope:'all'}));
-      else if(t==='none') applyMap(()=>({view:false,add:false,edit:false,delete:false}));
-      else if(t==='viewonly') applyMap(k=>({view:box(k,'view').checked,add:false,edit:false,delete:false}));
+      if(t==='role') applyMap((k,m)=>roleDef(k,m,rk), taDef);
+      else if(t==='all') applyMap(()=>({view:true,add:true,edit:true,delete:true,scope:'all'}), true);
+      else if(t==='none') applyMap(()=>({view:false,add:false,edit:false,delete:false}), false);
+      else if(t==='viewonly') applyMap(k=>({view:box(k,'view').checked,add:false,edit:false,delete:false}), false);
     }));
     document.getElementById('perm-copy').addEventListener('change', e=>{
       const src = emps.find(x=>String(x.id)===String(e.target.value)); if(!src) return;
-      applyMap((k,m)=>effFor(src,k,m)); e.target.value='';
+      applyMap((k,m)=>effFor(src,k,m), taCur(src)); e.target.value='';
       showToast('تم نسخ صلاحيات '+src.name+' — اضغط «حفظ الصلاحيات» لتأكيدها','ok');
     });
     document.getElementById('perm-undo').addEventListener('click', ()=>renderPermissionsSection(page));
@@ -2446,6 +2467,7 @@
         const s = sel(k); const scopeDiff = !!s && s.value!==d.scope;
         if(scopeDiff) cur.scope = s.value;
         if(scopeDiff || PERM_ACTIONS.some(([a])=>cur[a]!==!!d[a])) map[k]=cur; });
+      if(ta && ta.checked!==taDef) map.trip_assign = {add: ta.checked};
       if(!Object.keys(map).length){ if(rec) await apiDelete('user_permissions', rec.id); }
       else await apiAdd('user_permissions', {
         id:'perm_'+emp.id, employeeId:emp.id, employeeName:emp.name, username:emp.username||'', team:normTeam(emp.team),
@@ -3645,7 +3667,7 @@
       <div class="page-head"><h2>🧳 الرحلات</h2>
         ${canManageAccommodation()? `<button class="btn-primary btn-gold" id="add-trip-btn" style="width:auto;padding:10px 20px;">+ إضافة رحلة</button>`:''}
       </div>
-      <div class="assumption-note">اضغط على أي رحلة لعرض المشتركين فيها وبياناتهم. الرحلات غير مرتبطة بالفنادق — التسكين بيتم من قسم "التسكين" أو من صفحة الاشتراكات. حذف رحلة هنا لا يؤثر على الفنادق والغرف.</div>
+      <div class="assumption-note">اضغط على أي رحلة لعرض المشتركين فيها وبياناتهم. من داخل أي رحلة تقدر تضيف المشتركين وتسكّنهم على فندق ثم غرفة (حسب صلاحيتك). حذف رحلة هنا لا يؤثر على الفنادق والغرف.</div>
       <div class="card">
         ${trips.length? `<div class="areas-grid">${trips.map(t=>{
           const assignedCount = subs.filter(s=>String(s.tripId||'')===String(t.id)).length;
@@ -3709,17 +3731,19 @@
   }
 
   async function renderTripHub_Participants(page){
-    await getDataMany(['trips','subscriptions','accom_hotels','accom_rooms']);
+    await getDataMany(['trips','subscriptions','accom_hotels','accom_rooms','accom_guests']);
     const trips = await getData('trips');
     const trip = trips.find(t=>t.id===state.tripsHubTripId);
     if(!trip){ state.tripsHubView='trips'; return render(); }
     const hotels = await getData('accom_hotels');
     const rooms = await getData('accom_rooms');
     const allSubs = await getData('subscriptions');
+    const guestsAll = await getData('accom_guests');
     // التسكين والأدمن والمحاسبة والمحلل: يشوفوا كل مشتركي الرحلة. مستخدمو العلاقات العامة
     // بس هم اللي بيتقيّدوا بفريقهم.
     const seesAll = ['admin','accommodation','system','accounting','analyst'].includes(state.user.role);
-    const subs = (seesAll? allSubs : await filterPRData('subscriptions', allSubs))
+    const visibleSubs = seesAll? allSubs : await filterPRData('subscriptions', allSubs);
+    const subs = visibleSubs
       .filter(s=>String(s.tripId||'')===String(trip.id))
       .sort((a,b)=>String(a.customerName||'').localeCompare(String(b.customerName||''),'ar'));
     const capacity = num_(trip.capacity);
@@ -3728,12 +3752,47 @@
     const travelBadge = v=> v==='سافر'? 'green' : 'gray';
     const statusBadge = v=> v==='مكتمل'? 'blue' : v==='ملغي'? 'red' : 'green';
     const badge = (cls,v)=> v? `<span class="badge ${cls(v)}">${esc(v)}</span>` : '—';
+
+    // صلاحية الإضافة على الرحلة + التسكين: صلاحية «إضافة مشتركيه على الرحلة» من صفحة الصلاحيات
+    // + إنه يقدر يعدّل المشترك نفسه (مشتركيه هو، أو كل المشتركين للتسكين/الأدمن).
+    const canAssign = canTripAssign();
+    const rowEditable = r0 => canAssign && (canManageAccommodation() || prCanEditRow('subscriptions', r0));
+    const occ = {}; guestsAll.forEach(g=>{ if(g.roomId) occ[g.roomId] = (occ[g.roomId]||0)+1; });
+    const noHotel = '<span style="color:var(--muted);">لم يُسكَّن</span>';
+
+    const hotelCell = (r0, r, slot)=>{
+      const hid = r[slot.hotelKey]||'';
+      const h = hotels.find(x=>String(x.id)===String(hid));
+      if(!rowEditable(r0)) return `<td>${h? esc(h.name) : noHotel}</td>`;
+      const list = hotelsOfCity(slot.city);
+      if(h && !list.some(x=>String(x.id)===String(h.id))) list.push(h);
+      return `<td><select class="assign-select trip-hotel" data-id="${esc(r.id)}" data-hk="${slot.hotelKey}" data-rk="${slot.roomKey}">
+        <option value="">— بدون —</option>
+        ${linkOptionsHtml(list.map(x=>({id:x.id, label:linkLabel('accom_hotels',x)})), hid)}
+      </select></td>`;
+    };
+    const roomCell = (r0, r, slot)=>{
+      const hid = r[slot.hotelKey]||'', rid = r[slot.roomKey]||'';
+      const rm = rooms.find(x=>String(x.id)===String(rid));
+      if(!rowEditable(r0)) return `<td>${rm? esc(rm.roomNumber||'') : '—'}</td>`;
+      const list = rooms.filter(x=>hid && String(x.hotelId)===String(hid));
+      return `<td><select class="assign-select trip-room" data-id="${esc(r.id)}" data-rk="${slot.roomKey}" ${hid?'':'disabled'}>
+        <option value="">${hid? '— بدون —' : 'اختر الفندق أولًا'}</option>
+        ${list.map(x=>{
+          const cap = num_(x.capacity)||1, n = occ[x.id]||0, mine = String(x.id)===String(rid), full = n>=cap && !mine;
+          return `<option value="${esc(x.id)}" ${mine?'selected':''} ${full?'disabled':''}>${esc(linkLabel('accom_rooms',x))} (${n}/${cap})${full?' — ممتلئة':''}</option>`;
+        }).join('')}
+      </select></td>`;
+    };
+
     page.innerHTML = `
       <div class="page-head">
         <h2>👥 مشتركو رحلة ${esc(trip.label||'')} — ${esc(fmtDate(trip.date))}</h2>
+        ${canAssign? `<button class="btn-primary btn-gold" id="add-subs-to-trip" style="width:auto;padding:10px 20px;">+ إضافة مشترك للرحلة</button>`:''}
       </div>
       ${crumbsBar([{label:'الرحلات'},{label:(trip.label||fmtDate(trip.date)||'الرحلة')}])}
       ${seesAll? '' : `<div class="assumption-note">بتظهر لك هنا مشتركو فريقك فقط. قسم التسكين يرى كل المشتركين في الرحلة.</div>`}
+      ${canAssign? `<div class="assumption-note">لإضافة مشترك للرحلة اضغط «+ إضافة مشترك للرحلة»، وبعدها من الجدول اختر <b>الفندق</b> ثم <b>الغرفة</b> (مكة / المدينة). الغرف الممتلئة بتظهر معطّلة.</div>`:''}
       <div class="card" style="margin-bottom:16px;">
         <div class="trip-stats">
           ${capacity? `<div class="trip-stat"><b>${capacity}</b><span>العدد المطلوب</span></div>` : ''}
@@ -3743,13 +3802,9 @@
       </div>
       <div class="card">
         ${subs.length? `<div class="table-wrap"><table>
-          <thead><tr><th>#</th><th>العميل</th><th>الهاتف</th><th>الرقم القومي</th><th>الجنس</th><th>المحافظة</th><th>المجموعة</th><th>نوع الباقة</th><th>حالة القرعة</th><th>فندق مكة</th><th>غرفة مكة</th><th>فندق المدينة</th><th>غرفة المدينة</th><th>حالة السفر</th><th>حالة الاشتراك</th></tr></thead>
+          <thead><tr><th>#</th><th>العميل</th><th>الهاتف</th><th>الرقم القومي</th><th>الجنس</th><th>المحافظة</th><th>المجموعة</th><th>نوع الباقة</th><th>حالة القرعة</th><th>فندق مكة</th><th>غرفة مكة</th><th>فندق المدينة</th><th>غرفة المدينة</th><th>حالة السفر</th><th>حالة الاشتراك</th>${canAssign?'<th></th>':''}</tr></thead>
           <tbody>${subs.map((r0,i)=>{
             const r = withSubAccom(r0);
-            const hk = hotels.find(x=>String(x.id)===String(r.makkahHotelId||''));
-            const rk = rooms.find(x=>String(x.id)===String(r.makkahRoomId||''));
-            const hd = hotels.find(x=>String(x.id)===String(r.madinaHotelId||''));
-            const rd = rooms.find(x=>String(x.id)===String(r.madinaRoomId||''));
             return `<tr>
               <td>${i+1}</td>
               <td>${esc(r.customerName||'—')}</td>
@@ -3760,16 +3815,99 @@
               <td>${esc(r.groupName||'—')}</td>
               <td>${esc(r.packageType||'—')}</td>
               <td>${badge(lotteryBadge, r.lotteryStatus)}</td>
-              <td>${hk? esc(hk.name) : '<span style="color:var(--muted);">لم يُسكَّن</span>'}</td>
-              <td>${rk? esc(rk.roomNumber||'') : '—'}</td>
-              <td>${hd? esc(hd.name) : '<span style="color:var(--muted);">لم يُسكَّن</span>'}</td>
-              <td>${rd? esc(rd.roomNumber||'') : '—'}</td>
+              ${hotelCell(r0, r, SUB_ACCOM[0])}
+              ${roomCell(r0, r, SUB_ACCOM[0])}
+              ${hotelCell(r0, r, SUB_ACCOM[1])}
+              ${roomCell(r0, r, SUB_ACCOM[1])}
               <td>${badge(travelBadge, r.travelStatus)}</td>
               <td>${badge(statusBadge, r.subscriptionStatus)}</td>
+              ${canAssign? `<td>${rowEditable(r0)? `<button class="icon-btn del" data-rmsub="${esc(r.id)}" title="إزالة من الرحلة">✖ إزالة</button>` : ''}</td>`:''}
             </tr>`;
           }).join('')}</tbody></table></div>` : `<div class="empty-state"><div class="big">📭</div>لا يوجد مشتركون في هذه الرحلة بعد</div>`}
       </div>`;
     bindCrumbs(page, [ ()=>{ state.tripsHubView='trips'; render(); }, ()=>{} ]);
+    if(!canAssign) return;
+
+    // حفظ تغيير تسكين مشترك (فندق/غرفة) أو إزالته من الرحلة — بنفس منطق قسم التسكين
+    const saveSub = async (id, patch, el)=>{
+      const fresh = await getData('subscriptions');
+      const row = fresh.find(x=>String(x.id)===String(id)); if(!row) return;
+      if(el) el.disabled = true;
+      try{
+        const roomKey = patch && Object.keys(patch).find(k=>/RoomId$/.test(k) && patch[k]);
+        if(roomKey){
+          const rm = rooms.find(x=>String(x.id)===String(patch[roomKey]));
+          const gs = (await getData('accom_guests')).filter(g=>String(g.roomId)===String(patch[roomKey]) && String(g.subscriptionId||'')!==String(id));
+          if(rm && gs.length >= (num_(rm.capacity)||1)) throw new Error('الغرفة دي اتملت، اختر غرفة تانية');
+        }
+        const updated = {...withSubAccom(row), ...patch, hotelId:'', roomId:''};
+        await apiUpdate('subscriptions', updated);
+        await syncSubscriptionGuest(updated);
+        render();
+      }catch(err){ console.error(err); alert(err.message||'تعذر الحفظ'); render(); }
+    };
+    page.querySelectorAll('.trip-hotel').forEach(sel=>sel.addEventListener('change', ()=>
+      saveSub(sel.dataset.id, {[sel.dataset.hk]: sel.value, [sel.dataset.rk]: ''}, sel)));
+    page.querySelectorAll('.trip-room').forEach(sel=>sel.addEventListener('change', ()=>
+      saveSub(sel.dataset.id, {[sel.dataset.rk]: sel.value}, sel)));
+    page.querySelectorAll('[data-rmsub]').forEach(b=>b.addEventListener('click', ()=>{
+      if(!confirm('إزالة المشترك من الرحلة؟ (اشتراكه نفسه مش هيتحذف)')) return;
+      saveSub(b.dataset.rmsub, {tripId:''}, b);
+    }));
+
+    // نافذة إضافة مشتركين للرحلة
+    document.getElementById('add-subs-to-trip')?.addEventListener('click', ()=>{
+      const tripName = tid=>{ const t=trips.find(x=>String(x.id)===String(tid)); return t? (t.label||fmtDate(t.date)||'رحلة') : ''; };
+      const cands = visibleSubs
+        .filter(s=>String(s.tripId||'')!==String(trip.id) && s.subscriptionStatus!=='ملغي' && rowEditable(s))
+        .sort((a,b)=>String(a.customerName||'').localeCompare(String(b.customerName||''),'ar'));
+      const bg = document.createElement('div'); bg.className = 'modal-bg';
+      bg.innerHTML = `<div class="modal" style="max-width:560px;"><h3>➕ إضافة مشتركين إلى رحلة ${esc(trip.label||fmtDate(trip.date)||'')}</h3>
+        ${cands.length? `
+        <input type="text" id="ats-search" placeholder="🔍 ابحث بالاسم أو الهاتف أو الرقم القومي..." style="width:100%;padding:10px 14px;border:1.5px solid var(--line);border-radius:10px;background:var(--sand-50);font-family:inherit;margin-bottom:10px;"/>
+        <div id="ats-list" style="max-height:340px;overflow:auto;border:1px solid var(--line);border-radius:10px;">
+          ${cands.map(s=>{
+            const cur = s.tripId? tripName(s.tripId) : '';
+            const q = [s.customerName,s.phone,s.nationalId].join(' ').toLowerCase();
+            return `<label class="ats-item" data-q="${esc(q)}" style="display:flex;gap:10px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--line);cursor:pointer;">
+              <input type="checkbox" value="${esc(s.id)}" style="width:17px;height:17px;"/>
+              <span style="flex:1;"><b>${esc(s.customerName||'بدون اسم')}</b><br><span style="font-size:12px;color:var(--muted);">${esc(s.phone||'—')} · ${esc(s.nationalId||'—')}</span></span>
+              ${cur? `<span class="badge gold" title="هيتنقل من رحلته الحالية">حاليًا: ${esc(cur)}</span>` : '<span class="badge gray">بدون رحلة</span>'}
+            </label>`;
+          }).join('')}
+        </div>
+        <div style="font-size:12.5px;color:var(--muted);margin-top:8px;">بعد الإضافة اختر الفندق ثم الغرفة من جدول الرحلة. لو المشترك في رحلة تانية هيتنقل لهذه الرحلة.</div>`
+        : `<div class="empty-state"><div class="big">📭</div>لا يوجد مشتركون متاحون للإضافة (كل مشتركيك مضافين على هذه الرحلة بالفعل).</div>`}
+        <div class="modal-actions"><button type="button" class="btn-secondary" id="ats-cancel">إلغاء</button>
+          ${cands.length? `<button type="button" class="btn-primary btn-gold" id="ats-ok" disabled>إضافة المحدد (0)</button>`:''}</div></div>`;
+      document.body.appendChild(bg);
+      const close = ()=>bg.remove();
+      bg.querySelector('#ats-cancel').addEventListener('click', close);
+      bg.addEventListener('click', e=>{ if(e.target===bg) close(); });
+      if(!cands.length) return;
+      const ok = bg.querySelector('#ats-ok');
+      const checks = ()=>[...bg.querySelectorAll('#ats-list input[type=checkbox]:checked')];
+      const upd = ()=>{ const n=checks().length; ok.disabled = !n; ok.textContent = 'إضافة المحدد ('+n+')'; };
+      bg.querySelectorAll('#ats-list input').forEach(c=>c.addEventListener('change', upd));
+      bg.querySelector('#ats-search').addEventListener('input', e=>{
+        const q = e.target.value.trim().toLowerCase();
+        bg.querySelectorAll('.ats-item').forEach(it=>{ it.style.display = (!q || it.dataset.q.includes(q)) ? '' : 'none'; });
+      });
+      ok.addEventListener('click', async ()=>{
+        const ids = checks().map(c=>c.value); if(!ids.length) return;
+        ok.disabled = true; ok.textContent = 'جارٍ الإضافة...';
+        try{
+          const fresh = await getData('subscriptions');
+          for(const id of ids){
+            const row = fresh.find(x=>String(x.id)===String(id)); if(!row) continue;
+            const updated = {...withSubAccom(row), tripId: trip.id, hotelId:'', roomId:''};
+            await apiUpdate('subscriptions', updated);
+            await syncSubscriptionGuest(updated);
+          }
+          close(); showToast('تمت إضافة '+ids.length+' مشترك للرحلة','ok'); render();
+        }catch(err){ console.error(err); alert(err.message||'تعذرت الإضافة'); close(); render(); }
+      });
+    });
   }
 
 
