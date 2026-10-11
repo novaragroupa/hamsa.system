@@ -225,7 +225,7 @@ const MAX_BATCH_DELETE_IDS = 500;
 const ALL_TABLES = [
   'users','teams','employees','companies','visits','indoor_leads','indoor_data',
   'callcenter_feedback','callcenter_payments','accommodation','pr_member_data',
-  'subscriptions','trips','trip_hotels','accom_hotels','accom_rooms','accom_guests',
+  'subscriptions','external_subscriptions','trips','trip_hotels','accom_hotels','accom_rooms','accom_guests',
   'dashboards','widgets','accounting','app_settings','edit_logs','user_permissions','targets'
 ];
 
@@ -245,6 +245,8 @@ const TABLE_READ_ROLES = {
   // صفحتي "الاشتراكات" و"الفائزون" - صلاحية الكتابة (TABLE_WRITE_ROLES) تحت
   // ما اتغيرتش، يعني لسه مايقدروش يضيفوا/يعدلوا/يحذفوا فيها.
   subscriptions: ['admin','pr_manager','pr_leader','pr_member','analyst','accommodation','accounting'],
+  // الاشتراكات الخارجية: المدير (الأدمن) والتسكين بس.
+  external_subscriptions: ['admin','accommodation'],
   trips: ['admin','accommodation','system','pr_manager','pr_leader','pr_member','analyst','accounting'],
   trip_hotels: ['admin','accommodation','system','pr_manager','pr_leader','pr_member','accounting'],
   accom_hotels: ['admin','accommodation','system','pr_manager','pr_leader','pr_member','analyst','accounting'],
@@ -274,6 +276,8 @@ const TABLE_WRITE_ROLES = {
   accommodation: ['admin','accommodation','system'],
   pr_member_data: ['admin','pr_manager','pr_leader','pr_member'],
   subscriptions: ['admin','pr_manager','pr_leader','pr_member','accommodation'],
+  // الاشتراكات الخارجية: إضافة/تعديل/حذف للأدمن والتسكين (تسكين هنا بيضيف عادي، عكس جدول subscriptions).
+  external_subscriptions: ['admin','accommodation'],
   trips: ['admin','accommodation','system'],
   trip_hotels: ['admin','accommodation','system'],
   accom_hotels: ['admin','accommodation','system'],
@@ -327,7 +331,7 @@ function roleAllows(map, session, table) {
 const PERM_OVERRIDE_TABLES = [
   'teams','employees','companies','visits','indoor_leads','indoor_data',
   'callcenter_feedback','callcenter_payments','accommodation','pr_member_data',
-  'subscriptions','trips','trip_hotels','accom_hotels','accom_rooms','accom_guests'
+  'subscriptions','external_subscriptions','trips','trip_hotels','accom_hotels','accom_rooms','accom_guests'
 ];
 
 // القسم في الواجهة (MODULES) ممكن يغطي أكتر من جدول في الشيت.
@@ -1183,6 +1187,38 @@ function prGuestMutationAllowed(session, payload, action) {
   });
 }
 
+/* ---------------- صلاحية «إضافة المشتركين على الرحلة والتسكين» (trip_assign) ----------------
+ * بتتخزن في perms.trip_assign = {add:true|false} من صفحة الصلاحيات. لو الأدمن ألغاها لموظف،
+ * السيرفر بيرفض أي تغيير في الرحلة/الفندق/الغرفة على الاشتراكات من الموظف ده (باقي حقول الاشتراك
+ * بتتعدّل عادي). مفيش تخصيص = السلوك القديم زي ما هو. الأدمن مش بيتأثر. */
+const TRIP_ASSIGN_FIELDS = ['tripId','makkahHotelId','makkahRoomId','madinaHotelId','madinaRoomId'];
+function tripAssignDenied(session, payload, action) {
+  if (String(session.role || '') === 'admin') return false;
+  if (action !== 'upsert' && action !== 'batchUpsert') return false;
+  if (!session.employeeId) return false;
+  const rec = getCachedRows('user_permissions').find(function(r){
+    return String(r.employeeId || '') === String(session.employeeId || '');
+  });
+  if (!rec) return false;
+  const p = parsePermsField(rec.perms).trip_assign;
+  if (!p || !!p.add) return false; // مفيش تخصيص، أو مسموح
+  const rows = action === 'batchUpsert' ? ((payload || {}).rows || []) : [payload || {}];
+  const existingById = {};
+  getCachedRows('subscriptions').forEach(function(r){ existingById[String(r.id || '')] = r; });
+  const val = function(v){ return String(v === undefined || v === null ? '' : v).trim(); };
+  return rows.some(function(row){
+    const ex = existingById[String((row || {}).id || '')] || null;
+    // اشتراك قديم فندقه/غرفته متخزنين في hotelId/roomId القديمين: الواجهة بتنقلهم لحقول مكة/المدينة
+    // وقت الحفظ، فده مش تعيين جديد.
+    const legacy = !!ex && !!val(ex.hotelId) && !val(ex.makkahHotelId) && !val(ex.madinaHotelId);
+    return TRIP_ASSIGN_FIELDS.some(function(k){
+      if (!Object.prototype.hasOwnProperty.call(row, k)) return false;
+      if (legacy && k !== 'tripId') return false;
+      return val(row[k]) !== val(ex ? ex[k] : '');
+    });
+  });
+}
+
 function canMutateTable(session, table, payload, action) {
   // Generic users mutations are deliberately disabled. Use the dedicated
   // createEmployeeAccount / changePassword actions instead.
@@ -1204,6 +1240,8 @@ function canMutateTable(session, table, payload, action) {
   }
 
   if (!isWriteActionAllowed(session, table, payload, action)) return false;
+
+  if (table === 'subscriptions' && tripAssignDenied(session, payload, action)) return false;
 
   // التسكين مسموحله بس يعدّل (تعيين رحلة/فندق/غرفة) على مشترك موجود بالفعل —
   // ممنوع يضيف مشترك جديد أو يحذف أو يعمل batch. enforceOwnership تحت بتقصر
@@ -1542,7 +1580,7 @@ function resetRowsMemo() { _rowsMemo = {}; }
 // عن طريق installMaintenanceTriggers، وإلا بعد انتهاء مدة الكاش).
 const LOOKUP_CACHE_TABLES = ['users','employees','user_permissions','teams'];
 const DATA_CACHE_TABLES = [
-  'subscriptions','indoor_leads','indoor_data','pr_member_data','visits','companies',
+  'subscriptions','external_subscriptions','indoor_leads','indoor_data','pr_member_data','visits','companies',
   'callcenter_feedback','callcenter_payments','accommodation','trips','trip_hotels',
   'accom_hotels','accom_rooms','accom_guests','dashboards','widgets','accounting','app_settings','targets'
 ];
