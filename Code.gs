@@ -1214,6 +1214,8 @@ function tripAssignDenied(session, payload, action) {
     return TRIP_ASSIGN_FIELDS.some(function(k){
       if (!Object.prototype.hasOwnProperty.call(row, k)) return false;
       if (legacy && k !== 'tripId') return false;
+      // إلغاء الاشتراك بيشيله من الرحلة/الفندق/الغرفة تلقائيًا: التفريغ مسموح حتى لو الموظف معندوش صلاحية التسكين.
+      if (val((row || {}).subscriptionStatus) === 'ملغي' && val(row[k]) === '') return false;
       return val(row[k]) !== val(ex ? ex[k] : '');
     });
   });

@@ -815,15 +815,29 @@
     state.user=null;
   }
 
+  // طلب بمهلة: لو الخادم اتأخر/الشبكة وقفت، الطلب بيفشل بدل ما يفضل معلّق للأبد
+  // (وده كان بيخلي الشاشة واقفة ومفيش تنقل أو عمليات تانية).
+  async function fetchJsonT(url, opts, ms){
+    const ctl = (typeof AbortController!=='undefined') ? new AbortController() : null;
+    const timer = ctl ? setTimeout(()=>ctl.abort(), ms) : null;
+    try{
+      const r = await fetch(url, ctl ? {...opts, signal:ctl.signal} : opts);
+      return await r.json().catch(()=>null);
+    }catch(e){
+      if(e && e.name==='AbortError'){ const x=new Error('انتهت مهلة الاتصال بالخادم، حاول مرة أخرى'); x.retryable=true; throw x; }
+      throw e;
+    }finally{ if(timer) clearTimeout(timer); }
+  }
+
   async function sheetRequest(action, table, payload){
     if(!GOOGLE_SHEETS_WEBHOOK) throw new Error('رابط Google Sheets غير مضبوط');
     if(!HOMSA_SESSION) throw new Error('انتهت جلسة الدخول — سجّل الدخول مرة أخرى');
     if(action==='list'){
-      const r=await fetch(GOOGLE_SHEETS_WEBHOOK,{method:'POST',
+      const data=await fetchJsonT(GOOGLE_SHEETS_WEBHOOK,{method:'POST',
         headers:{'Content-Type':'text/plain;charset=utf-8'},
         body:JSON.stringify({action:'list',table,payload:{},session:HOMSA_SESSION}),
-        cache:'no-store'});
-      const data=await r.json();
+        cache:'no-store'}, 60000);
+      if(!data) throw new Error('استجابة غير صالحة من الخادم');
       if(!data.ok) {
         if(data.error==='Unauthorized') clearSession();
         throw new Error(data.error||'فشل تحميل البيانات من Google Sheets');
@@ -832,10 +846,9 @@
     }
     const body=JSON.stringify({action,table,payload,session:HOMSA_SESSION,at:new Date().toISOString()});
     // keepalive له حد ~64KB؛ لو الطلب أكبر (صور مثلًا) بنبعته من غيره عشان مايفشلش.
-    const r=await fetch(GOOGLE_SHEETS_WEBHOOK,{method:'POST',
+    const data=await fetchJsonT(GOOGLE_SHEETS_WEBHOOK,{method:'POST',
       headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body, keepalive: body.length<60000});
-    const data=await r.json().catch(()=>null);
+      body, keepalive: body.length<60000}, 90000);
     if(!data){ const e=new Error('استجابة غير صالحة من الخادم'); e.retryable=true; throw e; }
     if(!data.ok){
       const e=new Error(data.error||'فشل حفظ البيانات في Google Sheets');
@@ -850,11 +863,11 @@
   async function sheetRequestBulk(tables){
     if(!GOOGLE_SHEETS_WEBHOOK) throw new Error('رابط Google Sheets غير مضبوط');
     if(!HOMSA_SESSION) throw new Error('انتهت جلسة الدخول — سجّل الدخول مرة أخرى');
-    const r=await fetch(GOOGLE_SHEETS_WEBHOOK,{method:'POST',
+    const data=await fetchJsonT(GOOGLE_SHEETS_WEBHOOK,{method:'POST',
       headers:{'Content-Type':'text/plain;charset=utf-8'},
       body:JSON.stringify({action:'bulk',tables,payload:{},session:HOMSA_SESSION}),
-      cache:'no-store'});
-    const data=await r.json();
+      cache:'no-store'}, 60000);
+    if(!data) throw new Error('استجابة غير صالحة من الخادم');
     if(!data.ok){
       if(data.error==='Unauthorized') clearSession();
       throw new Error(data.error||'فشل تحميل البيانات من Google Sheets');
@@ -1607,6 +1620,11 @@
     return out;
   }
   function withSubAccom(row){ return {...row, ...subAccom(row)}; }
+  // لو الاشتراك اتلغى (ملغي): بيتشال تلقائيًا من الرحلة والفندق والغرفة (مكة والمدينة).
+  function clearIfCancelled(row){
+    if(!row || row.subscriptionStatus!=='ملغي') return row;
+    return {...row, tripId:'', hotelId:'', roomId:'', makkahHotelId:'', makkahRoomId:'', madinaHotelId:'', madinaRoomId:''};
+  }
 
   async function linkSelectOptionsFor(moduleKey, f, parentVal){
     const refList = await getData(f.ref);
@@ -1779,6 +1797,12 @@
 
   // كل اشتراك ممكن يبقى له نزيل في غرفة مكة ونزيل في غرفة المدينة (سجل لكل مدينة).
   async function syncSubscriptionGuest(sub){
+    // اشتراك ملغي: نشيل كل نزلائه من الغرف (مكة والمدينة) ومنعمل أي تسكين.
+    if(sub.subscriptionStatus==='ملغي'){
+      const gs = (await getData('accom_guests')).filter(g=>String(g.subscriptionId||'')===String(sub.id));
+      if(gs.length) await apiDeleteMany('accom_guests', gs.map(g=>g.id));
+      return;
+    }
     const acc = subAccom(sub);
     await getDataMany(['accom_guests','accom_rooms','accom_hotels']);
     const guests = await getData('accom_guests');
@@ -1823,14 +1847,20 @@
   const viewScroll = {};
   // render واحد في نفس الوقت: لو اتطلب أكتر من مرة (ضغطات سريعة) بينفّذ آخر حالة بس،
   // فمفيش صفحة قديمة تكتب فوق صفحة أحدث.
+  let renderStartedAt = 0;
   function render(){
-    if(renderRun){ renderAgain = true; return renderRun; }
-    renderRun = (async()=>{
-      try{ do{ renderAgain=false; await renderOnce(); }while(renderAgain); }
+    // لو في render شغال بنأجّل الجديد عليه، لكن لو فضل أكتر من 20 ثانية (طلب معلّق)
+    // بنتجاهله ونبدأ واحد جديد عشان التنقل بين الأقسام مايقفش.
+    if(renderRun && Date.now()-renderStartedAt<20000){ renderAgain = true; return renderRun; }
+    renderStartedAt = Date.now(); renderAgain = false;
+    let run;
+    run = (async()=>{
+      try{ do{ renderAgain=false; await renderOnce(); }while(renderAgain && renderRun===run); }
       catch(e){ console.error('render error', e); showToast('تعذّر عرض الصفحة، حاول مرة أخرى','error'); }
-      finally{ renderRun=null; }
+      finally{ if(renderRun===run){ renderRun=null; setPageLoading(false); } }
     })();
-    return renderRun;
+    renderRun = run;
+    return run;
   }
   async function renderOnce(){
     if(!state.user){ resetDataLayer(); renderLogin(); return; }
@@ -3679,7 +3709,7 @@
       <div class="assumption-note">اضغط على أي رحلة لعرض المشتركين فيها وبياناتهم. من داخل أي رحلة تقدر تضيف المشتركين وتسكّنهم على فندق ثم غرفة (حسب صلاحيتك). حذف رحلة هنا لا يؤثر على الفنادق والغرف.</div>
       <div class="card">
         ${trips.length? `<div class="areas-grid">${trips.map(t=>{
-          const assignedCount = subs.filter(s=>String(s.tripId||'')===String(t.id)).length;
+          const assignedCount = subs.filter(s=>String(s.tripId||'')===String(t.id) && s.subscriptionStatus!=='ملغي').length;
           return `<div class="area-chip click-card" data-trip="${t.id}">
             <div class="cnt">🧳</div><div class="nm">${esc(t.label||'رحلة')}</div>
             <div class="nm" style="color:var(--navy-700);font-weight:700;">${esc(fmtDate(t.date))}</div>
@@ -3753,7 +3783,7 @@
     const seesAll = ['admin','accommodation','system','accounting','analyst'].includes(state.user.role);
     const visibleSubs = seesAll? allSubs : await filterPRData('subscriptions', allSubs);
     const subs = visibleSubs
-      .filter(s=>String(s.tripId||'')===String(trip.id))
+      .filter(s=>String(s.tripId||'')===String(trip.id) && s.subscriptionStatus!=='ملغي')
       .sort((a,b)=>String(a.customerName||'').localeCompare(String(b.customerName||''),'ar'));
     const capacity = num_(trip.capacity);
     const remaining = capacity? Math.max(capacity - subs.length, 0) : null;
@@ -4610,7 +4640,8 @@
         showToast('كمّل بيانات الإيصال (كود أوميجا، تاريخ الدفع، الباقة، القيمة، الرقم القومي، الجنس) عشان يتحول لمشترك');
         return;
       }
-      const newRow = {...fresh, [f.key]: v};
+      let newRow = {...fresh, [f.key]: v};
+      if(key==='subscriptions') newRow = clearIfCancelled(newRow);
       try{
         if(f.required && !String(v).trim()) throw new Error('"'+f.label+'" مطلوب');
         if(newRow.type==='مهتم' && ['sourceType','responsiblePerson'].includes(f.key) && !String(v).trim())
@@ -4621,6 +4652,7 @@
         }
         td.style.opacity = '.5';
         await apiUpdate(key, newRow);
+        if(key==='subscriptions' && f.key==='subscriptionStatus' && v==='ملغي') await syncSubscriptionGuest(newRow);
         td.style.opacity = '';
         td.innerHTML = fieldDisplay(f, v, linkMaps, newRow);
         td.classList.add('cell-saved'); setTimeout(()=>td.classList.remove('cell-saved'), 900);
@@ -5727,6 +5759,7 @@
           if(!String(newRow.gender||'').trim()) throw new Error('جنس العميل مطلوب عند تحويل المهتم إلى مشترك');
         }
 
+        if(key==='subscriptions') Object.assign(newRow, clearIfCancelled(newRow));
         if(isNew) await apiAdd(key, newRow); else await apiUpdate(key, newRow);
         if(key==='indoor_leads') await maybeCreateSubscriptionFromLead(newRow, (modalBg.querySelector('[name="__tripId"]')||{}).value || '');
         if(key==='subscriptions') await syncSubscriptionGuest(newRow);
@@ -5752,6 +5785,7 @@
             LINK_SHARED_KEYS.forEach(k=>{ rec[k] = newRow[k] || ''; });
             rec.linkGroupId = newRow.linkGroupId;
             rec.hotelId=''; rec.roomId='';
+            Object.assign(rec, clearIfCancelled(rec));
             if(!rec.customerName) throw new Error('اسم الشخص المرتبط مطلوب');
             if(existing){ await apiUpdate('subscriptions', rec); await syncSubscriptionGuest(rec); }
             else { await apiAdd('subscriptions', rec); await syncSubscriptionGuest(rec); }
