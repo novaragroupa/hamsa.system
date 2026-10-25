@@ -1,4 +1,4 @@
-\/**
+/**
  * Homsa System -> Google Sheets backend (secured PR roles)
  *
  * نشر Web App:
