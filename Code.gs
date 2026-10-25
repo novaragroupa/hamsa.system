@@ -1,4 +1,4 @@
-/**
+\/**
  * Homsa System -> Google Sheets backend (secured PR roles)
  *
  * نشر Web App:
@@ -34,8 +34,21 @@ function doPost(e) {
       return json(handleLogin(String(body.username || ''), String(body.password || '')));
     }
 
+    // طلب إعادة تعيين كلمة المرور: بدون جلسة (المستخدم ناسي الباسورد). الرد دايمًا واحد عشان ما نكشفش وجود اسم المستخدم.
+    if (action === 'requestPasswordReset') {
+      return json(handlePasswordResetRequest(String(body.username || ''), String(body.reason || '')));
+    }
+
     const session = verifySession(String(body.session || ''));
     if (!session) return json({ok:false, error:'Unauthorized'});
+
+    // لو الحساب داخل بكلمة مرور مؤقتة من المدير: ممنوع أي عملية غير تغيير كلمة المرور / الخروج / تجديد الجلسة.
+    {
+      const _cu = currentUserForSession(session);
+      if (_cu && String(_cu.mustChangePassword || '') === 'yes' && ['me','logout','changePassword'].indexOf(action) < 0) {
+        return json({ok:false, error:'MUST_CHANGE_PASSWORD'});
+      }
+    }
 
     if (action === 'me') {
       // تجديد الجلسة: كل نداء "me" بيرجّع توكن جديد بمدة كاملة، فالموظف الشغّال مايتفصلش وسط الشغل.
@@ -44,7 +57,12 @@ function doPost(e) {
         role: String(session.role || ''), team: String(session.team || ''), employeeId: String(session.employeeId || ''),
         sv: Number(session.sv || 1), exp: Math.floor(Date.now()/1000) + SESSION_TTL_SECONDS
       });
-      return json({ok:true, user:publicSessionUser(session), session:renewed});
+      const _meUser = currentUserForSession(session);
+      return json({
+        ok:true, user:publicSessionUser(session), session:renewed,
+        mustChange: !!_meUser && String(_meUser.mustChangePassword || '') === 'yes',
+        pendingPasswordRequests: String(session.role || '') === 'admin' ? pendingPasswordRequestCount() : 0
+      });
     }
 
     // ملخص التعديلات: بيرجّع تعديلات سجل واحد، أو عدّادات خفيفة بدل تحميل جدول edit_logs كله للمتصفح.
@@ -110,6 +128,14 @@ function doPost(e) {
 
     if (action === 'changePassword') {
       return json(handleChangePassword(session, body.payload || {}));
+    }
+
+    // طلبات كلمة المرور: للمدير (admin) فقط.
+    if (action === 'listPasswordRequests') {
+      return json(handleListPasswordRequests(session));
+    }
+    if (action === 'resolvePasswordRequest') {
+      return json(handleResolvePasswordRequest(session, body.payload || {}));
     }
 
     if (action === 'createEmployeeAccount') {
@@ -604,7 +630,11 @@ function handleLogin(username, password) {
     exp: Math.floor(Date.now()/1000) + SESSION_TTL_SECONDS
   };
 
-  return {ok:true, user:publicSessionUser(payload), session:createSession(payload)};
+  return {
+    ok:true, user:publicSessionUser(payload), session:createSession(payload),
+    mustChange: String(user.mustChangePassword || '') === 'yes',
+    pendingPasswordRequests: String(user.role || '') === 'admin' ? pendingPasswordRequestCount() : 0
+  };
 }
 
 function createSession(payload) {
@@ -680,6 +710,12 @@ function handleChangePassword(session, payload) {
   if (!user) return {ok:false, error:'الحساب غير موجود'};
   if (!verifyPassword(user, currentPassword)) return {ok:false, error:'كلمة المرور الحالية غير صحيحة'};
 
+  // الباسورد المؤقت لازم يتغيّر فعلًا (مش اسم المستخدم بس) وما يتكررش.
+  if (String(user.mustChangePassword || '') === 'yes') {
+    if (!newPassword) return {ok:false, error:'يجب تعيين كلمة مرور جديدة للمتابعة'};
+    if (newPassword === currentPassword) return {ok:false, error:'كلمة المرور الجديدة يجب أن تختلف عن المؤقتة'};
+  }
+
   if (newUsername) {
     const taken = users.some(function(u){
       return String(u.id || '') !== String(user.id || '') &&
@@ -693,6 +729,7 @@ function handleChangePassword(session, payload) {
     user.passwordSalt = randomSalt();
     user.passwordAlgo = 'sha256-iterated-v1';
     user.passwordHash = hashPassword(newPassword, user.passwordSalt);
+    user.mustChangePassword = '';
   }
 
   user.sessionVersion = Number(user.sessionVersion || 1) + 1;
@@ -836,6 +873,160 @@ function handleCreateEmployeeAccount(session, payload) {
     return {ok:true, user:publicUser(user), employee:employee};
   } finally {
     lock.releaseLock();
+  }
+}
+
+/* ---------------- طلبات إعادة تعيين كلمة المرور ----------------
+ * المستخدم الناسي بيبعت طلب (من غير تسجيل دخول) → بيتسجل في شيت password_requests بحالة pending
+ * → المدير (admin) بيفتح صفحة "طلبات كلمة المرور" ويوافق (يحط باسورد مؤقت أو النظام يولّده) أو يرفض.
+ * - الباسورد ما بيتخزنش في شيت الطلبات خالص؛ بيتعرض للمدير مرة واحدة بس عند الموافقة.
+ * - الباسورد الجديد مؤقت: الحساب بيتعلّم mustChangePassword وبيتجبر على تغييره عند أول دخول.
+ * - الشيت مش في ALL_TABLES عشان ما يتفتحش من واجهة الجداول العامة. */
+const PWR_SHEET = 'password_requests';
+const PWR_MAX_PER_WINDOW = 3;       // أقصى عدد طلبات لنفس اسم المستخدم
+const PWR_WINDOW_SECONDS = 10 * 60; // خلال 10 دقائق
+
+function pwrSheet() {
+  const ss = SpreadsheetApp.getActive();
+  let sh = ss.getSheetByName(PWR_SHEET);
+  if (!sh) {
+    sh = ss.insertSheet(PWR_SHEET);
+    const cols = ['id','userId','username','name','role','reason','status','createdAt','handledBy','handledAt','note'];
+    sh.getRange(1, 1, 1, cols.length).setValues([cols]);
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function pendingPasswordRequestCount() {
+  try {
+    const sh = SpreadsheetApp.getActive().getSheetByName(PWR_SHEET);
+    if (!sh) return 0;
+    return readRows(sh).filter(function(r){ return String(r.status || '') === 'pending'; }).length;
+  } catch (_) { return 0; }
+}
+
+function handlePasswordResetRequest(username, reason) {
+  // نفس الرد في كل الحالات: ما نكشفش هل اسم المستخدم موجود ولا لأ.
+  const generic = {ok:true, message:'تم إرسال طلبك إلى المدير. ستتواصل معك الإدارة بعد المراجعة.'};
+  username = normalizeUsername(username);
+  if (!username || username.length > 80) return generic;
+
+  // حد أقصى للطلبات لكل اسم مستخدم (منع الإزعاج/السبام).
+  const cache = CacheService.getScriptCache();
+  const rkey = 'pwreq:' + username;
+  const n = Number(cache.get(rkey) || 0);
+  if (n >= PWR_MAX_PER_WINDOW) return generic;
+  cache.put(rkey, String(n + 1), PWR_WINDOW_SECONDS);
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) return {ok:false, error:'الخادم مشغول، حاول مرة أخرى بعد قليل'};
+  try {
+    resetRowsMemo();
+    const usersSheet = SpreadsheetApp.getActive().getSheetByName('users');
+    if (!usersSheet) return generic;
+    const user = readRows(usersSheet).find(function(u){ return normalizeUsername(u.username) === username; });
+    if (!user || String(user.status || 'active') === 'inactive') return generic;
+
+    const sh = pwrSheet();
+    const rows = readRows(sh);
+    const hasPending = rows.some(function(r){
+      return String(r.userId || '') === String(user.id || '') && String(r.status || '') === 'pending';
+    });
+    if (hasPending) return generic; // مفيش تكرار وهو لسه pending
+
+    upsertRow(sh, {
+      id: 'pwr_' + Utilities.getUuid().replace(/-/g, ''),
+      userId: String(user.id || ''),
+      username: String(user.username || ''),
+      name: String(user.name || ''),
+      role: String(user.role || ''),
+      reason: String(reason || '').trim().slice(0, 300),
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      handledBy: '', handledAt: '', note: ''
+    });
+    SpreadsheetApp.flush();
+    return generic;
+  } finally {
+    try { lock.releaseLock(); } catch (_) {}
+  }
+}
+
+function handleListPasswordRequests(session) {
+  if (String(session.role || '') !== 'admin') return {ok:false, error:'Forbidden'};
+  const sh = SpreadsheetApp.getActive().getSheetByName(PWR_SHEET);
+  const rows = sh ? readRows(sh) : [];
+  rows.sort(function(a, b){ return String(b.createdAt || '').localeCompare(String(a.createdAt || '')); });
+  return {ok:true, rows: rows.slice(0, 300)};
+}
+
+function generateTempPassword() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, Utilities.getUuid() + Utilities.getUuid() + Date.now());
+  let out = '';
+  for (let i = 0; i < 14; i++) out += alphabet.charAt((bytes[i] & 255) % alphabet.length);
+  return out;
+}
+
+function handleResolvePasswordRequest(session, payload) {
+  if (String(session.role || '') !== 'admin') return {ok:false, error:'Forbidden'};
+  const id = String(payload.id || '');
+  const decision = String(payload.decision || '');
+  if (!id || ['approve','reject'].indexOf(decision) < 0) return {ok:false, error:'بيانات غير صحيحة'};
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(25000)) return {ok:false, error:'Server busy, try again'};
+  try {
+    resetRowsMemo();
+    const sh = pwrSheet();
+    const info = getRowInfoById(sh, id);
+    const req = info.obj;
+    if (!req) return {ok:false, error:'الطلب غير موجود'};
+    if (String(req.status || '') !== 'pending') return {ok:false, error:'تم التعامل مع هذا الطلب بالفعل'};
+
+    const now = new Date().toISOString();
+    const handler = String(session.name || session.username || '');
+
+    if (decision === 'reject') {
+      req.status = 'rejected';
+      req.handledBy = handler; req.handledAt = now;
+      req.note = String(payload.note || '').trim().slice(0, 300);
+      upsertRow(sh, req, info);
+      SpreadsheetApp.flush();
+      return {ok:true, status:'rejected'};
+    }
+
+    // موافقة: الباسورد المؤقت من المدير أو بيتولّد تلقائيًا.
+    let temp = String(payload.newPassword || '');
+    const generated = !temp;
+    if (generated) temp = generateTempPassword();
+    if (temp.length < PASSWORD_MIN_LENGTH) return {ok:false, error:'كلمة المرور يجب أن تكون 12 حرفًا على الأقل'};
+
+    const usersSheet = SpreadsheetApp.getActive().getSheetByName('users');
+    if (!usersSheet) return {ok:false, error:'الحسابات غير متاحة'};
+    const uinfo = getRowInfoById(usersSheet, String(req.userId || ''));
+    const user = uinfo.obj;
+    if (!user) return {ok:false, error:'حساب المستخدم لم يعد موجودًا'};
+    if (String(user.status || 'active') === 'inactive') return {ok:false, error:'حساب المستخدم موقوف'};
+
+    user.passwordSalt = randomSalt();
+    user.passwordAlgo = 'sha256-iterated-v1';
+    user.passwordHash = hashPassword(temp, user.passwordSalt);
+    user.sessionVersion = Number(user.sessionVersion || 1) + 1; // يفصل أي جلسة قديمة
+    user.mustChangePassword = 'yes';
+    upsertRow(usersSheet, user, uinfo);
+    invalidateCachedRows('users');
+    clearLoginFailures(user.username);
+
+    req.status = 'approved';
+    req.handledBy = handler; req.handledAt = now;
+    req.note = String(payload.note || '').trim().slice(0, 300);
+    upsertRow(sh, req, info);
+    SpreadsheetApp.flush();
+    return {ok:true, status:'approved', tempPassword:temp, generated:generated, username:String(user.username || '')};
+  } finally {
+    try { lock.releaseLock(); } catch (_) {}
   }
 }
 
