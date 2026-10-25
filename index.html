@@ -714,7 +714,18 @@
   // المدير والتسكين بس يشوفوها ويضيفوا ويعدلوا. جدول مستقل (external_subscriptions).
   MODULES.external_subscriptions = {
     title:'الاشتراكات الخارجية', icon:'🌐', roles:['admin','accommodation'],
-    fields: MODULES.subscriptions.fields.filter(f=>f.key!=='leadId')
+    fields: (()=>{
+      const base = MODULES.subscriptions.fields.filter(f=>f.key!=='leadId');
+      // بيانات بتتكتب يدويًا (مش من قايمة الموظفين) وبتكون ضمن بيانات العميل
+      const extra = [
+        {key:'repName', label:'المندوب', type:'text'},
+        {key:'branchName', label:'الفرع (اسم الفرع)', type:'text'},
+        {key:'salesName', label:'اسم السليز', type:'text'},
+      ];
+      const i = base.findIndex(f=>f.key==='governorate');
+      base.splice(i>=0? i+1 : base.length, 0, ...extra);
+      return base;
+    })()
   };
 
   const LEDGER_FIELDS = [
@@ -728,7 +739,7 @@
   ];
 
   /* ---------------- Google Sheets backend ---------------- */
-  const GOOGLE_SHEETS_WEBHOOK = 'https://script.google.com/macros/s/AKfycbw7Cnm2cgOiB_6MJ2DJYP8NsLaNDXtbaJKRrLiri4LizkMr7s1Q8-AOzRX8uEg5t_pr/exec';
+  const GOOGLE_SHEETS_WEBHOOK = 'https://script.google.com/macros/s/AKfycbwPqbT_d1yUY_cbmMgGEu6K1tkMkOMn57Q1d0siJmqHl4CNVGgrhcaV6ANuiNcblACG/exec';
   let HOMSA_SESSION = sessionStorage.getItem('homsa_session_token') || '';
 
   async function authRequest(action, payload){
@@ -1258,6 +1269,7 @@
     try{
       const d = await authRequest('me',{});
       if(d.session){ HOMSA_SESSION = d.session; sessionStorage.setItem('homsa_session_token', HOMSA_SESSION); }
+      state.pwrPending = d.pendingPasswordRequests || 0;
     }catch(e){ console.warn('session renew failed', e); }
   }
   document.addEventListener('visibilitychange', ()=>{
@@ -2136,11 +2148,13 @@
               </div>
               <button class="login-submit" type="submit">دخول</button>
             </form>
-            <div class="login-foot">تواجه مشكلة في الدخول؟ تواصل مع مسؤول النظام</div>
+            <div class="login-foot"><a href="#" id="forgot-link" style="color:var(--navy-700);font-weight:700;text-decoration:underline;">نسيت كلمة المرور؟</a></div>
+            <div class="login-foot" style="margin-top:10px;">تواجه مشكلة في الدخول؟ تواصل مع مسؤول النظام</div>
           </div>
         </div>
       </div>`;
     initHeroScene();
+    document.getElementById('forgot-link').addEventListener('click', e=>{ e.preventDefault(); openForgotPasswordForm(document.getElementById('login-u').value.trim()); });
     document.getElementById('login-form').addEventListener('submit', async e=>{
       e.preventDefault();
       const btn = e.target.querySelector('button[type=submit]');
@@ -2159,8 +2173,10 @@
         HOMSA_SESSION=data.session;
         sessionStorage.setItem('homsa_session_token',HOMSA_SESSION);
         state.user = data.user; state.loginError=null; state.view='dashboard';
+        state.pwrPending = data.pendingPasswordRequests || 0;
         sessionStorage.setItem('homsa_session_user', JSON.stringify(data.user));
         render();
+        if(data.mustChange) openChangeAccountForm(true);
       }catch(err){
         console.error('Login error', err);
         state.loginError = err.message || 'تعذر تسجيل الدخول';
@@ -2265,6 +2281,7 @@
     });
     if(state.user.role==='admin'){
       groups.admin.push(`<button class="nav-item ${state.view==='permissions'?'active':''}" data-view="permissions">🔐<span>الصلاحيات</span></button>`);
+      groups.admin.push(`<button class="nav-item ${state.view==='password_requests'?'active':''}" data-view="password_requests">🔑<span>طلبات كلمة المرور${state.pwrPending?` <b style="background:var(--danger);color:#fff;border-radius:20px;padding:1px 8px;font-size:11px;margin-inline-start:6px;">${Number(state.pwrPending)}</b>`:''}</span></button>`);
     }
     // "الاشتراكات الملغاة" مش موديول مستقل في MODULES — هي نفس بيانات
     // الاشتراكات بس مفلترة على حالة "ملغي"، فبتظهر لنفس اللي أصلًا يقدر
@@ -2323,10 +2340,11 @@
     if(!page) return;
     const mods = accessibleModules();
     { const _gk = state.view==='cancelled_subscriptions' ? 'subscriptions' : state.view;
-      const _denyPerm = state.view==='permissions' && state.user.role!=='admin';
+      const _denyPerm = ['permissions','password_requests'].includes(state.view) && state.user.role!=='admin';
+      const _denyTitle = state.view==='password_requests' ? 'طلبات كلمة المرور' : 'الصلاحيات';
       if((MODULES[_gk] && !canViewModule(_gk)) || _denyPerm){
         state.view='dashboard'; updateActiveNav();
-        setTimeout(()=>showDenied('view', _denyPerm?null:_gk, _denyPerm?{title:'الصلاحيات'}:{}), 60);
+        setTimeout(()=>showDenied('view', _denyPerm?null:_gk, _denyPerm?{title:_denyTitle}:{}), 60);
       } }
     if(['areas','ledger','companies','callcenter_payments','indoor_data'].includes(state.view)){
       state.view='dashboard'; updateActiveNav();
@@ -2334,6 +2352,7 @@
     if(state.view==='dashboard') await renderDashboard(page, mods);
     else if(state.view==='pr_teams') await renderPRHierarchy(page);
     else if(state.view==='permissions') await renderPermissionsSection(page);
+    else if(state.view==='password_requests') await renderPasswordRequestsSection(page);
     else if(state.view==='teams') await renderTeamsSection(page);
     else if(state.view==='analytics') await renderAnalytics(page, analyticsAccessibleModules());
     else if(state.view==='accommodation') await renderAccommodationSection(page);
@@ -2351,6 +2370,123 @@
 
 
   /* ---------------- قسم "الصلاحيات" (مدير النظام فقط) ---------------- */
+  /* ---------------- طلبات كلمة المرور ---------------- */
+  // نموذج "نسيت كلمة المرور" في شاشة الدخول (من غير تسجيل دخول).
+  function openForgotPasswordForm(prefillUser){
+    const modalBg = document.createElement('div');
+    modalBg.className = 'modal-bg';
+    modalBg.innerHTML = `<div class="modal">
+      <h3>نسيت كلمة المرور</h3>
+      <div class="assumption-note">اكتب اسم المستخدم وسيصل طلبك للمدير، وهو اللي هيحدد لك كلمة مرور جديدة أو يرفض الطلب.</div>
+      <form id="forgot-form"><div class="form-grid">
+        <div class="field full"><label>اسم المستخدم *</label><input name="username" required autocomplete="username" value="${esc(prefillUser||'')}" /></div>
+        <div class="field full"><label>سبب الطلب (اختياري)</label><textarea name="reason" maxlength="300" rows="3" style="width:100%;font-family:inherit;padding:10px;border:1px solid var(--line);border-radius:10px;"></textarea></div>
+      </div>
+      <div class="modal-actions"><button type="button" class="btn-secondary" id="cancel-btn">إلغاء</button><button type="submit" class="btn-primary btn-gold">إرسال الطلب</button></div>
+      </form></div>`;
+    document.body.appendChild(modalBg);
+    modalBg.querySelector('#cancel-btn').addEventListener('click', ()=>modalBg.remove());
+    modalBg.addEventListener('click', e=>{ if(e.target===modalBg) modalBg.remove(); });
+    modalBg.querySelector('#forgot-form').addEventListener('submit', async e=>{
+      e.preventDefault();
+      const form=e.target, btn=form.querySelector('button[type=submit]');
+      btn.disabled=true; btn.textContent='جارٍ الإرسال...';
+      try{
+        const r = await fetch(GOOGLE_SHEETS_WEBHOOK,{
+          method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, cache:'no-store',
+          body:JSON.stringify({action:'requestPasswordReset', username:form.username.value.trim().toLowerCase(), reason:form.reason.value.trim()})
+        });
+        const d = await r.json().catch(()=>({ok:false,error:'استجابة غير صالحة من الخادم'}));
+        if(!d.ok) throw new Error(d.error||'تعذر إرسال الطلب');
+        modalBg.remove();
+        showToast(d.message || 'تم إرسال طلبك إلى المدير','ok');
+      }catch(err){
+        alert(err.message || 'تعذر إرسال الطلب'); btn.disabled=false; btn.textContent='إرسال الطلب';
+      }
+    });
+  }
+
+  // صفحة المدير: قائمة الطلبات (موافقة / رفض).
+  async function renderPasswordRequestsSection(page){
+    if(state.user.role!=='admin') return;
+    page.innerHTML = `<div class="page-head"><h2>🔑 طلبات كلمة المرور</h2></div>
+      <div class="card" id="pwr-card"><div class="page-inline-loading">⏳ جاري تحميل الطلبات…</div></div>`;
+    const card = document.getElementById('pwr-card');
+    let rows = [];
+    try{ rows = (await authRequest('listPasswordRequests',{})).rows || []; }
+    catch(err){ card.innerHTML = `<div class="error-box">${esc(err.message||'تعذر تحميل الطلبات')}</div>`; return; }
+    state.pwrPending = rows.filter(r=>r.status==='pending').length;
+    const fmt = v=>{ const d=new Date(v); return isNaN(d) ? '' : d.toLocaleString('ar-EG',{dateStyle:'medium',timeStyle:'short'}); };
+    const badge = st => st==='pending' ? '<span class="badge gold">قيد المراجعة</span>' : st==='approved' ? '<span class="badge green">تمت الموافقة</span>' : '<span class="badge red">مرفوض</span>';
+    if(!rows.length){ card.innerHTML = '<div class="assumption-note">لا توجد طلبات حتى الآن.</div>'; return; }
+    const pendingFirst = rows.slice().sort((a,b)=> (a.status==='pending'?0:1)-(b.status==='pending'?0:1));
+    card.innerHTML = `<div class="table-wrap"><table><thead><tr>
+        <th>الموظف</th><th>اسم المستخدم</th><th>الدور</th><th>السبب</th><th>وقت الطلب</th><th>الحالة</th><th>تمت المعالجة بواسطة</th><th></th>
+      </tr></thead><tbody>${pendingFirst.map(r=>`<tr>
+        <td>${esc(r.name)}</td><td dir="ltr" style="text-align:right;">${esc(r.username)}</td>
+        <td>${esc(ROLE_LABELS[r.role]||r.role)}</td><td>${esc(r.reason)||'—'}</td><td>${esc(fmt(r.createdAt))}</td>
+        <td>${badge(r.status)}${r.note?`<div style="font-size:12px;color:var(--muted);margin-top:4px;">${esc(r.note)}</div>`:''}</td>
+        <td>${r.status==='pending'?'—':esc(r.handledBy)+'<div style="font-size:12px;color:var(--muted);">'+esc(fmt(r.handledAt))+'</div>'}</td>
+        <td style="white-space:nowrap;">${r.status==='pending'?`
+          <button class="btn-primary btn-gold" style="width:auto;padding:7px 14px;" data-act="approve" data-id="${esc(r.id)}">موافقة</button>
+          <button class="btn-secondary" style="padding:7px 14px;" data-act="reject" data-id="${esc(r.id)}">رفض</button>`:''}</td>
+      </tr>`).join('')}</tbody></table></div>`;
+    card.querySelectorAll('button[data-act]').forEach(b=>b.addEventListener('click', ()=>{
+      const req = rows.find(x=>String(x.id)===b.dataset.id);
+      if(req) openResolvePasswordRequest(req, b.dataset.act);
+    }));
+  }
+
+  function openResolvePasswordRequest(req, act){
+    const approve = act==='approve';
+    const modalBg = document.createElement('div');
+    modalBg.className = 'modal-bg';
+    modalBg.innerHTML = `<div class="modal">
+      <h3>${approve?'الموافقة على الطلب':'رفض الطلب'} — ${esc(req.name)}</h3>
+      <form id="pwr-form"><div class="form-grid">
+        ${approve?`<div class="field full"><label>كلمة المرور المؤقتة الجديدة</label>
+          <div style="display:flex;gap:8px;"><input name="newPassword" type="text" minlength="12" dir="ltr" autocomplete="off" placeholder="اتركها فارغة ليولّدها النظام" style="flex:1;" />
+          <button type="button" class="btn-secondary" id="gen-btn">توليد</button></div>
+          <div style="font-size:12px;color:var(--muted);margin-top:6px;">12 حرفًا على الأقل. سيُجبر الموظف على تغييرها عند أول دخول، وسيتم إنهاء أي جلسة مفتوحة له.</div></div>`:''}
+        <div class="field full"><label>${approve?'ملاحظة (اختياري)':'سبب الرفض (اختياري)'}</label><input name="note" maxlength="300" /></div>
+      </div>
+      <div class="modal-actions"><button type="button" class="btn-secondary" id="cancel-btn">إلغاء</button><button type="submit" class="btn-primary btn-gold">${approve?'تأكيد الموافقة':'تأكيد الرفض'}</button></div>
+      </form></div>`;
+    document.body.appendChild(modalBg);
+    modalBg.querySelector('#cancel-btn').addEventListener('click', ()=>modalBg.remove());
+    modalBg.addEventListener('click', e=>{ if(e.target===modalBg) modalBg.remove(); });
+    const gen = modalBg.querySelector('#gen-btn');
+    if(gen) gen.addEventListener('click', ()=>{
+      const al='ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789', a=new Uint32Array(14); crypto.getRandomValues(a);
+      modalBg.querySelector('[name=newPassword]').value = Array.from(a,x=>al[x%al.length]).join('');
+    });
+    modalBg.querySelector('#pwr-form').addEventListener('submit', async e=>{
+      e.preventDefault();
+      const form=e.target, btn=form.querySelector('button[type=submit]');
+      btn.disabled=true; const label=btn.textContent; btn.textContent='جارٍ التنفيذ...';
+      try{
+        const d = await authRequest('resolvePasswordRequest',{
+          id:req.id, decision:act, note:form.note.value.trim(),
+          newPassword: approve ? form.newPassword.value : ''
+        });
+        if(approve){
+          modalBg.querySelector('.modal').innerHTML = `<h3>تمت الموافقة ✅</h3>
+            <div class="assumption-note">سلّم الموظف بيانات الدخول التالية. كلمة المرور <b>لن تظهر مرة أخرى</b>:</div>
+            <div style="margin:14px 0;padding:14px;background:var(--sand-50);border:1px solid var(--line);border-radius:10px;direction:ltr;text-align:center;">
+              <div style="font-size:12px;color:var(--muted);">${esc(d.username)}</div>
+              <div id="tmp-pass" style="font-size:20px;font-weight:800;letter-spacing:1px;margin-top:6px;user-select:all;">${esc(d.tempPassword)}</div></div>
+            <div class="modal-actions"><button type="button" class="btn-secondary" id="copy-btn">نسخ</button><button type="button" class="btn-primary btn-gold" id="done-btn">تم</button></div>`;
+          modalBg.querySelector('#copy-btn').addEventListener('click', async ()=>{
+            try{ await navigator.clipboard.writeText(d.tempPassword); showToast('تم النسخ','ok'); }catch(_){ showToast('انسخها يدويًا','error'); }
+          });
+          modalBg.querySelector('#done-btn').addEventListener('click', ()=>{ modalBg.remove(); render(); });
+        } else { modalBg.remove(); showToast('تم رفض الطلب','ok'); render(); }
+      }catch(err){
+        alert(err.message || 'فشلت العملية'); btn.disabled=false; btn.textContent=label;
+      }
+    });
+  }
+
   async function renderPermissionsSection(page){
     if(state.user.role!=='admin') return;
     await getDataMany(['teams','employees','user_permissions']);
@@ -4037,6 +4173,18 @@
     else { const [y,m]=p.month.split('-').map(Number); const d=new Date(y,m-1+dir,1); p.month=d.getFullYear()+'-'+tgPad(d.getMonth()+1); }
   }
   function tgGoals(rec){ const g=(rec&&rec.goals)||{}; return (typeof g==='object')? g : (()=>{ try{ return JSON.parse(g)||{}; }catch(_){ return {}; } })(); }
+  // id ثابت لكل تارجت (نوع + اسم + فترة) — بنعتمد عليه في البحث لأن Google Sheets
+  // ممكن يحوّل مفتاح الفترة (مثلًا 2026-10) لتاريخ فالمقارنة النصية تفشل والتارجت يختفي.
+  function tgTargetId(scopeType, name, periodType, key){
+    return ['tg',scopeType,normName(name).replace(/\s+/g,'_'),periodType,key].join('|');
+  }
+  function tgKeyMatch(raw, periodType, key){
+    const s = String(raw==null?'':raw).trim();
+    if(s===key) return true;
+    const m = s.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?/);
+    if(!m) return false;
+    return periodType==='monthly' ? (m[1]+'-'+m[2])===key : (m[0]===key && !!m[3]);
+  }
   function tgCount(goals, list){ return list.reduce((s,k)=>s+(Number(goals[k])||0),0); }
 
   async function renderTargetsSection(page){
@@ -4065,8 +4213,12 @@
       list.forEach(s=>{ if(by[s.packageType]!==undefined) by[s.packageType]++; });
       return by;
     };
-    const targetRec = (scopeType, name)=> targets.find(r=>r.kind==='target' && r.scopeType===scopeType && r.periodType===P.type && String(r.periodKey)===per.key
-      && (scopeType==='team' ? normTeam(r.teamName)===normTeam(name) : sameName(r.employeeName,name)));
+    const targetRec = (scopeType, name)=>{
+      const wantId = tgTargetId(scopeType, name, P.type, per.key);
+      return targets.find(r=>String(r.id)===wantId)
+        || targets.find(r=>r.kind==='target' && r.scopeType===scopeType && r.periodType===P.type && tgKeyMatch(r.periodKey, P.type, per.key)
+          && (scopeType==='team' ? normTeam(r.teamName)===normTeam(name) : sameName(r.employeeName,name)));
+    };
     const incentive = ach => tgCount(ach,TG_UMRAH)*rU + tgCount(ach,TG_HAJJ)*rH;
     const cell = (g,a)=> g ? `<span style="font-weight:700;color:${a>=g?'var(--success)':'var(--navy-800)'};">${a}</span> / ${g}` : (a? `<b>${a}</b>` : '<span style="color:var(--muted);">—</span>');
     const pct = (a,g)=> g? Math.min(100,Math.round(a/g*100)) : 0;
@@ -4184,7 +4336,7 @@
       try{
         const goals={};
         TG_ALL.forEach((k,i)=>{ const v=Number(bg.querySelector('[data-g="'+i+'"]').value)||0; if(v>0) goals[k]=v; });
-        const id = rec ? rec.id : ['tg',scopeType,normName(name).replace(/\s+/g,'_'),periodType,per.key].join('|');
+        const id = rec ? rec.id : tgTargetId(scopeType, name, periodType, per.key);
         const row = {...(rec||{}), id, kind:'target', scopeType, periodType, periodKey:per.key, goals};
         if(scopeType==='team') row.teamName=name; else row.employeeName=name;
         await apiAdd('targets', row);
@@ -5372,22 +5524,24 @@
   }
 
   /** أي موظف مسجّل دخوله يقدر يغيّر اسم المستخدم و/أو كلمة المرور بتاعته من هنا */
-  function openChangeAccountForm(){
+  function openChangeAccountForm(forced){
     const modalBg = document.createElement('div');
     modalBg.className = 'modal-bg';
     modalBg.innerHTML = `<div class="modal">
       <h3>تغيير بيانات الدخول</h3>
-      <div class="assumption-note">اتركها فارغة إذا كنت لا ترغب في تغييرها. يجب إدخال كلمة المرور الحالية للتأكيد.</div>
+      <div class="assumption-note">${forced?'⚠️ دخلت بكلمة مرور مؤقتة حدّدها المدير. لازم تعيّن كلمة مرور جديدة الآن للمتابعة (كلمة المرور الحالية = المؤقتة).':'اتركها فارغة إذا كنت لا ترغب في تغييرها. يجب إدخال كلمة المرور الحالية للتأكيد.'}</div>
       <form id="change-account-form"><div class="form-grid">
         <div class="field"><label>اسم المستخدم الجديد (اختياري)</label><input name="newUsername" pattern="[a-zA-Z0-9._-]{3,40}" placeholder="اتركه فارغًا إذا لم ترغب في التغيير" /></div>
-        <div class="field"><label>كلمة المرور الجديدة (اختياري)</label><input name="newPassword" type="password" minlength="12" placeholder="12 حرفًا على الأقل" /></div>
+        <div class="field"><label>كلمة المرور الجديدة (اختياري)</label><input name="newPassword" type="password" minlength="12" ${forced?'required':''} placeholder="12 حرفًا على الأقل" /></div>
         <div class="field full"><label>كلمة المرور الحالية *</label><input name="currentPassword" type="password" required /></div>
       </div>
-      <div class="modal-actions"><button type="button" class="btn-secondary" id="cancel-btn">إلغاء</button><button type="submit" class="btn-primary btn-gold">حفظ</button></div>
+      <div class="modal-actions">${forced?'':'<button type="button" class="btn-secondary" id="cancel-btn">إلغاء</button>'}<button type="submit" class="btn-primary btn-gold">حفظ</button></div>
       </form></div>`;
     document.body.appendChild(modalBg);
-    modalBg.querySelector('#cancel-btn').addEventListener('click', ()=>modalBg.remove());
-    modalBg.addEventListener('click', e=>{if(e.target===modalBg) modalBg.remove();});
+    if(!forced){
+      modalBg.querySelector('#cancel-btn').addEventListener('click', ()=>modalBg.remove());
+      modalBg.addEventListener('click', e=>{if(e.target===modalBg) modalBg.remove();});
+    }
     modalBg.querySelector('#change-account-form').addEventListener('submit', async e=>{
       e.preventDefault();
       const form=e.target, btn=form.querySelector('button[type=submit]');
@@ -5888,6 +6042,9 @@
             state.user=data.user;
             sessionStorage.setItem('homsa_session_user', JSON.stringify(data.user));
             if(data.session){ HOMSA_SESSION=data.session; sessionStorage.setItem('homsa_session_token', HOMSA_SESSION); }
+            const _pp = data.pendingPasswordRequests || 0;
+            if(_pp !== state.pwrPending){ state.pwrPending = _pp; if(state.user.role==='admin') render(); }
+            if(data.mustChange) openChangeAccountForm(true);
           } else {
             sessionStorage.removeItem('homsa_session_user'); sessionStorage.removeItem('homsa_session_token');
             HOMSA_SESSION=''; state.user=null; render();
@@ -5903,7 +6060,7 @@
 (function(){
   'use strict';
   const SECTIONS = [
-    ['👤','بيانات العميل',['leadId','customerName','nationalId','phone','gender','governorate']],
+    ['👤','بيانات العميل',['leadId','customerName','nationalId','phone','gender','governorate','repName','branchName','salesName']],
     ['💳','بيانات الاشتراك',['packageType','subscriptionDate','groupName','responsiblePerson','omegaCode','subscriptionStatus','lotteryStatus','travelStatus']],
     ['🏨','الرحلة والتسكين',['tripId','makkahHotelId','makkahRoomId','madinaHotelId','madinaRoomId']],
     ['💰','بيانات الدفع',['subscriptionValue','downPayment','installmentMonths','installmentAmount','paymentDate']],
